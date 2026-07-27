@@ -90,14 +90,15 @@ jobs:
           security create-keychain -p "$KPW" "$KEYCHAIN"
           security set-keychain-settings -lut 21600 "$KEYCHAIN"
           security unlock-keychain -p "$KPW" "$KEYCHAIN"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "${P12_PASSWORD}" -A -T /usr/bin/codesign
+          IMPORT_OUTPUT="$(security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" -P "${P12_PASSWORD}" -A -T /usr/bin/codesign 2>&1)"
+          echo "$IMPORT_OUTPUT"
           # Let codesign use the key without an interactive prompt.
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KPW" "$KEYCHAIN" >/dev/null
-          # Prepend to the search list so xcodebuild's codesign finds "Tinycast Self-Signed".
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
-          SIGNING_IDENTITY="$(security find-certificate -c "Tinycast Self-Signed" -Z "$KEYCHAIN" | awk '/SHA-1 hash:/{print $3; exit}')"
+          # The P12 secret contains only this identity; use its certificate fingerprint directly.
+          SIGNING_IDENTITY="$(openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -clcerts -nokeys \
+            -passin "pass:${P12_PASSWORD}" 2>/dev/null | openssl x509 -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
           if [ -z "$SIGNING_IDENTITY" ]; then
-            echo "::error::Imported P12 does not contain the Tinycast Self-Signed certificate."
+            echo "::error::Could not read the signing certificate fingerprint from the imported P12."
             exit 1
           fi
           echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
