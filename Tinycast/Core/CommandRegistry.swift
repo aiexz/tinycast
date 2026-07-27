@@ -10,6 +10,7 @@ enum CommandID: String, CaseIterable, Sendable {
     case importFromRaycast = "command:import-from-raycast"
     case settings = "command:settings"
     case about = "command:about"
+    case quitAllApps = "command:quit-all-apps"
     case quit = "command:quit"
     // Microphone + caffeination launcher commands (shared contract). The microphone
     // level/caffeination duration args aren't carried by `AppEntry`; the immediate
@@ -36,6 +37,7 @@ enum CommandID: String, CaseIterable, Sendable {
         case .importFromRaycast: return "Import from Raycast"
         case .settings: return "Settings"
         case .about: return "About Tinycast"
+        case .quitAllApps: return "Quit All Applications"
         case .quit: return "Quit Tinycast"
         case .toggleMicrophone: return "Toggle Audio Input"
         case .setMicrophoneLevel: return "Set Microphone Level"
@@ -58,6 +60,7 @@ enum CommandID: String, CaseIterable, Sendable {
         case .importFromRaycast: return "arrow.down.doc"
         case .settings: return "gearshape"
         case .about: return "info.circle"
+        case .quitAllApps: return "xmark.circle"
         case .quit: return "power"
         case .toggleMicrophone: return "mic.slash"
         case .setMicrophoneLevel: return "slider.vertical.3"
