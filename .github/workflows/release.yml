@@ -94,6 +94,8 @@ jobs:
           echo "$IMPORT_OUTPUT"
           # Let codesign use the key without an interactive prompt.
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KPW" "$KEYCHAIN" >/dev/null
+          # Make the imported identity discoverable by codesign, matching the upstream workflow.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
           # The P12 secret contains only this identity; use its certificate fingerprint directly.
           CERT_PEM="$RUNNER_TEMP/signing-cert.pem"
           if ! openssl pkcs12 -legacy -in "$RUNNER_TEMP/cert.p12" -clcerts -nokeys \
@@ -101,8 +103,6 @@ jobs:
             openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -clcerts -nokeys \
               -passin "pass:${P12_PASSWORD}" -out "$CERT_PEM"
           fi
-          security add-trusted-cert -d -r trustRoot -k "$KEYCHAIN" "$CERT_PEM"
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
           SIGNING_IDENTITY="$(openssl x509 -in "$CERT_PEM" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
           if [ -z "$SIGNING_IDENTITY" ]; then
             echo "::error::Could not read the signing certificate fingerprint from the imported P12."
