@@ -101,6 +101,8 @@ jobs:
             openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -clcerts -nokeys \
               -passin "pass:${P12_PASSWORD}" -out "$CERT_PEM"
           fi
+          security add-trusted-cert -d -r trustRoot -k "$KEYCHAIN" "$CERT_PEM"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
           SIGNING_IDENTITY="$(openssl x509 -in "$CERT_PEM" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
           if [ -z "$SIGNING_IDENTITY" ]; then
             echo "::error::Could not read the signing certificate fingerprint from the imported P12."
