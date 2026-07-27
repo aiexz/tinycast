@@ -14,7 +14,7 @@ struct TinycastApp: App {
             appName, systemImage: "macwindow.on.rectangle", isInserted: $showInMenuBar
         ) {
             Button("Open \(appName)") { AppCore.shared.showPalette(mode: .launcher) }
-            Button("Clipboard History") { AppCore.shared.showPalette(mode: .clipboard) }
+            Button("Clipboard History") { AppCore.shared.showClipboard() }
             Divider()
             Button("Settings...") { AppCore.shared.showSettings() }
                 .keyboardShortcut(",")

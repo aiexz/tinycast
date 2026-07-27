@@ -4,6 +4,10 @@ struct LauncherList: View {
     let results: [AppEntry]
     let selectedID: AppEntry.ID?
     let favoriteCount: Int
+    /// Count of `Frequently Used` rows immediately following the favorite block — drives the
+    /// mixed app/command header the sectioned layout inserts between Favorites and Applications.
+    /// Zero unless `showSections`, so the flat (typed-query) layout stays plain.
+    let rankedCount: Int
     let showSections: Bool
     /// Changes only when the list should scroll to follow the selection (keyboard nav / reset), so mouse selection never yanks the scroll position.
     let scrollToken: UUID
@@ -40,14 +44,19 @@ struct LauncherList: View {
         }
         var rows: [Row] = calcRows
         let favorites = results.prefix(favoriteCount)
-        let rest = results.dropFirst(favoriteCount)
+        // Ranked band sits between Favorites and the rest; mixed apps + commands, so it gets its
+        // own section rather than splitting by kind like the alphabetical groups below.
+        let rankedStart = favoriteCount
+        let rankedEnd = favoriteCount + rankedCount
+        let ranked = results[rankedStart..<rankedEnd]
+        let rest = results.dropFirst(rankedEnd)
         // `rest` is apps-then-panes-then-commands by the AppIndex sort invariant, so filtering by kind keeps row order identical and the flat selection index valid.
         let apps = rest.filter { $0.kind == .application }
         let panes = rest.filter { $0.kind == .systemSettings }
         let commands = rest.filter { $0.kind == .command }
         for (title, group) in [
-            ("Favorites", Array(favorites)), ("Applications", apps),
-            ("System Settings", panes), ("Commands", commands),
+            ("Favorites", Array(favorites)), ("Frequently Used", Array(ranked)),
+            ("Applications", apps), ("System Settings", panes), ("Commands", commands),
         ]
         where !group.isEmpty {
             rows.append(.header(title))

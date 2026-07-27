@@ -12,7 +12,7 @@ CPU churn. Just SwiftUI + AppKit with zero dependencies. It's fast because there
 
 ## Features
 
-- **App launcher** — fuzzy-search and launch anything, pin favorites, see what's running.
+- **App launcher** — fuzzy-search and launch anything, pin favorites, see what's running, and keep your five most-used apps and commands within reach.
 - **Calculator** — do math and unit conversions inline, right in the palette.
 - **Clipboard history** — text and images, searchable, pasted back into the app you were using.
 - **Global hotkey** — one shortcut summons the palette from anywhere.

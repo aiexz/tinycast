@@ -205,7 +205,6 @@ final class AppIndex: ObservableObject {
         }
         return apps + SettingsPaneScanner.scan() + CommandRegistry.all
     }
-
     /// Ranked matches. Empty query returns the full alphabetical list.
     func matches(_ query: String, limit: Int = 200) -> [AppEntry] {
         let q = query.trimmingCharacters(in: .whitespaces)
@@ -232,7 +231,6 @@ final class AppIndex: ObservableObject {
             .map(\.0)
     }
 }
-
 enum FuzzyMatch {
     /// Tiered relevance score (higher is better), or nil when the query doesn't match; tiers are spaced so a better kind always wins.
     static func score(query: String, candidate: String) -> Int? {

@@ -34,14 +34,31 @@ struct RootPaletteView: View {
         return favs.prefix(4).map(CompactFavoriteSlot.app) + [.more]
     }
 
-    /// Ordered launcher results (the single source of truth for list, selection and activation): empty query pins favorites to the top, otherwise plain ranked matches.
+    /// Ordered launcher results (the single source of truth for list, selection and activation):
+    /// empty query composes favorites first, then `AppUsageStore`'s ranked `Frequently Used`
+    /// prefix (excluding favorite keys so nothing duplicates), then the rest in AppIndex order.
+    /// A non-empty query stays plain fuzzy ranking — section layout never coexists with typing.
     private var appResults: [AppEntry] {
         // Visibility filtering stays downstream of `matches` so its one-deep memo cache is never keyed on hidden state; hidden favorites drop out here too.
         let base = appIndex.matches(vm.query).filter(visibility.isVisible)
-        guard isQueryEmpty, !favorites.keys.isEmpty else { return base }
-        let split = favorites.ordered(base)
-        return split.favorites + split.rest
+        guard isQueryEmpty else { return base }
+        let favSplit = favorites.ordered(base)
+        let usageSplit = core.appUsage.split(favSplit.rest, excluding: Set(favorites.keys))
+        return favSplit.favorites + usageSplit.ranked + usageSplit.rest
     }
+
+    /// Count of `Frequently Used` rows in `apps` immediately following the favorite block.
+    /// Mirrors the exact `split` call `appResults` runs, on the same inputs, so the count always
+    /// matches the ranked prefix actually laid out (favorites excluded, settings never ranked,
+    /// capped at 5). Re-runs `split` once per render in the launcher-on-empty branch — the same
+    // cost `appResults` already pays, and the operation is bounded by the visible result set.
+    private func appUsageRankedCount(apps: [AppEntry], after favoriteCount: Int) -> Int {
+        guard favoriteCount < apps.count else { return 0 }
+        let rest = Array(apps[favoriteCount..<apps.count])
+        let usageSplit = core.appUsage.split(rest, excluding: Set(favorites.keys))
+        return min(usageSplit.ranked.count, apps.count - favoriteCount)
+    }
+
     private var clipResults: [ClipboardItem] { store.search(vm.query) }
     private var histResults: [CalcHistoryEntry] { calcHistory.search(vm.query) }
     private var emojiSections: [EmojiGridSection] {
@@ -170,6 +187,13 @@ struct RootPaletteView: View {
         let showSections = vm.mode == .launcher && isQueryEmpty
         let favoriteCount =
             showSections ? apps.prefix(while: { favorites.isFavorite($0) }).count : 0
+        // `appResults` lays out favorites → ranked → rest, so the ranked prefix is the contiguous
+        // band right after favorites. Its count is the only thing LauncherList needs to render a
+        // separate "Frequently Used" section; computing it from `apps` keeps a single render
+        // source of truth (the appResults filter/sort isn't memoized, but this prefix scan runs
+        // only in the launcher-on-empty branch, once per render).
+        let rankedCount = showSections
+            ? appUsageRankedCount(apps: apps, after: favoriteCount) : 0
         let selectedApp = apps.indices.contains(sel - offset) ? apps[sel - offset] : nil
         // Derive the footer label from the already-resolved selection so `bottomBar` doesn't re-run `appResults` (its filter/sort aren't memoized). The primary/Actions group is hidden when there's nothing to act on: no results in any mode, or an error calc card (selectable but action-less).
         let pillLabel = actionPillLabel(selectedApp: selectedApp, calcActionable: calcActionable)
@@ -183,7 +207,8 @@ struct RootPaletteView: View {
                 } else {
                     content(
                         apps: apps, clips: clips, hist: hist, emojiSections: emojiSections, calc: calc,
-                        selection: sel, favoriteCount: favoriteCount, showSections: showSections
+                        selection: sel, favoriteCount: favoriteCount, rankedCount: rankedCount,
+                        showSections: showSections
                     )
                 }
             }
@@ -455,7 +480,7 @@ struct RootPaletteView: View {
     private func content(
         apps: [AppEntry], clips: [ClipboardItem], hist: [CalcHistoryEntry],
         emojiSections: [EmojiGridSection], calc: CalcResult?,
-        selection: Int, favoriteCount: Int, showSections: Bool
+        selection: Int, favoriteCount: Int, rankedCount: Int, showSections: Bool
     ) -> some View {
         switch vm.mode {
         case .launcher:
@@ -467,6 +492,7 @@ struct RootPaletteView: View {
                 results: apps,
                 selectedID: calcSelected ? nil : selectedID,
                 favoriteCount: favoriteCount,
+                rankedCount: rankedCount,
                 showSections: showSections,
                 scrollToken: scrollToken,
                 calc: calc,

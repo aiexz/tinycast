@@ -6,6 +6,7 @@ final class HotKeyManager: ObservableObject {
     var onTogglePalette: (() -> Void)?
     var onToggleClipboard: (() -> Void)?
     var onToggleEmoji: (() -> Void)?
+    var onToggleApp: ((String) -> Void)?
 
     /// The recorder currently capturing keystrokes, or `nil`; keeping this as plain app state makes recorders glitch-free, and any active recorder pauses Carbon so the typed combo can't fire a hotkey.
     @Published var recordingAction: HotKeyAction? {
@@ -113,7 +114,7 @@ final class HotKeyManager: ObservableObject {
         case .togglePalette: onTogglePalette?()
         case .toggleClipboard: onToggleClipboard?()
         case .toggleEmoji: onToggleEmoji?()
-        case .app(let bundleID): AppLauncher.toggle(bundleID: bundleID)
+        case .app(let bundleID): onToggleApp?(bundleID)
         case .settingsPane(let bundleID): AppLauncher.openSettingsPane(bundleID: bundleID)
         }
     }

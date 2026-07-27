@@ -5,7 +5,8 @@ struct GeneralSettingsView: View {
     @ObservedObject private var hyperTap = AppCore.shared.hyperKeyTap
     // Same UserDefaults key the `App` binds its `MenuBarExtra(isInserted:)` to — toggling here updates the menu-bar icon live, with no shared observable between them.
     @AppStorage(SettingsKey.showInMenuBar) private var showInMenuBar = true
-
+    /// Backs the Reset Ranking confirmation dialog (SwiftUI requires a `Bool` source).
+    @State private var showRankingResetConfirm = false
     /// The Hyper modifier chord as prose glyphs, tracking the Include Shift toggle.
     private var hyperGlyphs: String { settings.hyperKeyIncludesShift ? "⌃⌥⇧⌘" : "⌃⌥⌘" }
 
@@ -198,6 +199,35 @@ struct GeneralSettingsView: View {
                 ) {
                     Button("Show…") { AppCore.shared.showOnboarding() }
                         .controlSize(.small)
+                }
+            }
+
+            SettingsCard(header: "Launcher Ranking") {
+                SettingsRow(
+                    title: "Reset Ranking",
+                    subtitle:
+                        "Clear the learned launcher frequency. Apps and commands return to their default sections; Frequently Used stays hidden until Tinycast relearns your usage.",
+                    systemImage: "chart.bar.xaxis",
+                    tint: .red
+                ) {
+                    Button("Reset…", role: .destructive) {
+                        showRankingResetConfirm = true
+                    }
+                    .controlSize(.small)
+                    .confirmationDialog(
+                        "Clear learned launcher frequency?",
+                        isPresented: $showRankingResetConfirm,
+                        titleVisibility: .visible
+                    ) {
+                        Button("Reset Ranking", role: .destructive) {
+                            AppCore.shared.appUsage.reset()
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text(
+                            "This forgets how often each app and command was opened from the launcher and restores the default alphabetical grouping. Favorites are unaffected."
+                        )
+                    }
                 }
             }
         }

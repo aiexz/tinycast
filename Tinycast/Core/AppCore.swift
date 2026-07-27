@@ -99,6 +99,7 @@ final class AppCore: ObservableObject {
     let emojiIndex = EmojiIndex()
     let frequentEmoji = FrequentEmojiStore()
     let runningApps = RunningAppsMonitor()
+    let appUsage = AppUsageStore()
     let palette = PaletteViewModel()
 
     private lazy var windowController = PaletteWindowController(core: self)
@@ -126,6 +127,7 @@ final class AppCore: ObservableObject {
         hotKeys.onTogglePalette = { [weak self] in self?.togglePalette() }
         hotKeys.onToggleClipboard = { [weak self] in self?.toggleClipboard() }
         hotKeys.onToggleEmoji = { [weak self] in self?.toggleEmoji() }
+        hotKeys.onToggleApp = { [weak self] in self?.toggleApp(bundleID: $0) }
         hotKeys.start()
         // Deliberately keeps running while `hotKeys.recordingAction` pauses Carbon: the recorder relies on the tap's rewritten flags to capture Hyper shortcuts.
         hyperKeyTap.start(settings: settings)
@@ -137,6 +139,7 @@ final class AppCore: ObservableObject {
         }
     }
 
+
     // MARK: - Palette control
 
     func togglePalette() {
@@ -147,7 +150,17 @@ final class AppCore: ObservableObject {
         }
     }
 
+    func toggleApp(bundleID: String) {
+        if let app = appIndex.apps.first(where: {
+            $0.kind == .application && $0.bundleID == bundleID
+        }) {
+            appUsage.record(app)
+        }
+        AppLauncher.toggle(bundleID: bundleID)
+    }
+
     func toggleClipboard() {
+        recordCommand(.clipboardHistory)
         if windowController.isVisible, palette.mode == .clipboard {
             hidePalette()
         } else {
@@ -155,7 +168,12 @@ final class AppCore: ObservableObject {
         }
     }
 
+    func showClipboard() {
+        recordCommand(.clipboardHistory)
+        showPalette(mode: .clipboard)
+    }
     func toggleEmoji() {
+        recordCommand(.searchEmoji)
         if windowController.isVisible, palette.mode == .emoji {
             hidePalette()
         } else {
@@ -163,6 +181,10 @@ final class AppCore: ObservableObject {
         }
     }
 
+    private func recordCommand(_ id: CommandID) {
+        guard let entry = CommandRegistry.all.first(where: { $0.id == id.rawValue }) else { return }
+        appUsage.record(entry)
+    }
     /// Shows the palette, honoring Pop to Root Search: a reopen within the timeout restores the pre-close state — any mode for the generic summon (`restoreAnyMode`), else only when the preserved mode already matches the requested one.
     func showPalette(mode: PaletteMode, restoreAnyMode: Bool = false) {
         let preserved = windowController.consumePreservedState()
@@ -244,6 +266,12 @@ final class AppCore: ObservableObject {
     // MARK: - Actions invoked from the palette UI
 
     func launch(_ app: AppEntry) {
+        // Record frequency once for launcher activations only — apps and commands count,
+        // system settings (and direct hotkey/system activations) do not. Recorded before
+        // dispatch so a mode-switch or app quit can't race the tally.
+        if app.kind != .systemSettings {
+            appUsage.record(app)
+        }
         // Commands dispatch before the palette hides: mode-switching commands keep it open.
         if app.kind == .command {
             runCommand(app)
