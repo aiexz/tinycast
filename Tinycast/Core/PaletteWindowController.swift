@@ -97,6 +97,12 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
         hide(restoreFocus: false)
     }
 
+    /// Keep compact/expanded resizing anchored to the user's dragged position.
+    func windowDidMove(_ notification: Notification) {
+        guard let panel, panel.isVisible else { return }
+        anchor = (x: panel.frame.minX, topEdgeY: panel.frame.maxY)
+    }
+
     /// Re-bump focusToken a turn after the panel becomes key: on the first-ever show this fires mid-mount, before the SwiftUI tree has registered its onChange, so a synchronous bump is silently lost.
     func windowDidBecomeKey(_ notification: Notification) {
         DispatchQueue.main.async { [weak self] in
