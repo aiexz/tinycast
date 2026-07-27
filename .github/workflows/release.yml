@@ -95,6 +95,12 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KPW" "$KEYCHAIN" >/dev/null
           # Prepend to the search list so xcodebuild's codesign finds "Tinycast Self-Signed".
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
+          SIGNING_IDENTITY="$(security find-certificate -c "Tinycast Self-Signed" -Z "$KEYCHAIN" | awk '/SHA-1 hash:/{print $3; exit}')"
+          if [ -z "$SIGNING_IDENTITY" ]; then
+            echo "::error::Imported P12 does not contain the Tinycast Self-Signed certificate."
+            exit 1
+          fi
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> "$GITHUB_ENV"
           rm -f "$RUNNER_TEMP/cert.p12"
 
       # Xcode rejects an untrusted self-signed certificate during build-setting validation even
@@ -113,7 +119,8 @@ jobs:
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             build
           APP="$RUNNER_TEMP/DerivedData/Build/Products/Release/${DISPLAY_NAME}.app"
-          codesign --force --sign "Tinycast Self-Signed" --timestamp=none \
+          codesign --force --keychain "$RUNNER_TEMP/signing.keychain-db" \
+            --sign "$SIGNING_IDENTITY" --timestamp=none \
             --entitlements Tinycast/Tinycast.entitlements "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
 
