@@ -1,14 +1,29 @@
 import SwiftUI
 
-/// One-deep memo over `CalcEngine.evaluate`, mirroring `AppIndex.matchCache`, so hover/selection re-renders with the same query don't re-run the evaluator.
+/// One-deep memo over `CalcEngine.evaluate`, mirroring `AppIndex.matchCache`, so hover/selection
+/// re-renders with the same query don't re-run the evaluator. Keyed on the consent flag plus the
+/// snapshot's `fetchedAt`, so flipping the setting or landing a fresh table invalidates the memo
+/// without comparing the rate table itself.
 @MainActor
 enum CalcMemo {
-    private static var cache: (query: String, result: CalcResult?)?
+    private static var cache: (query: String, enabled: Bool, stamp: Date?, result: CalcResult?)?
 
-    static func evaluate(_ query: String) -> CalcResult? {
-        if let cache, cache.query == query { return cache.result }
-        let result = CalcEngine.evaluate(query)
-        cache = (query, result)
+    static func evaluate(_ query: String, currency: CurrencySource) -> CalcResult? {
+        let enabled: Bool
+        let stamp: Date?
+        switch currency {
+        case .off:
+            enabled = false
+            stamp = nil
+        case .on(let rates):
+            enabled = true
+            stamp = rates?.fetchedAt
+        }
+        if let cache, cache.query == query, cache.enabled == enabled, cache.stamp == stamp {
+            return cache.result
+        }
+        let result = CalcEngine.evaluate(query, currency: currency)
+        cache = (query, enabled, stamp, result)
         return result
     }
 }
@@ -78,6 +93,8 @@ private struct CalcColumn: View {
             if let badge {
                 Text(badge)
                     .font(Theme.Typography.keyCap)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, Theme.Spacing.sm)
                     .padding(.vertical, Theme.Spacing.xxs)

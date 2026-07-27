@@ -32,13 +32,16 @@ struct CalcResult: Equatable, Sendable {
 
 /// Entry point turning a raw query into a calculator answer (or nil when it isn't calculator input), via a pure pre-filter → base → unit → arithmetic pipeline; kept Foundation-only so `Tools/calc-test.swift` compiles it standalone.
 enum CalcEngine {
-    /// Public entry: evaluates against the live clock.
-    static func evaluate(_ raw: String) -> CalcResult? {
-        evaluate(raw, now: Date(), calendar: .current)
+    /// Public entry: evaluates against the live clock. `currency` defaults to `.off` so any caller that
+    /// hasn't been handed a consented source gets the feature disabled rather than silently enabled.
+    static func evaluate(_ raw: String, currency: CurrencySource = .off) -> CalcResult? {
+        evaluate(raw, now: Date(), calendar: .current, currency: currency)
     }
 
     /// `now`/`calendar` are injected so the date/time paths are deterministic under `Tools/calc-test.swift`.
-    static func evaluate(_ raw: String, now: Date, calendar: Calendar) -> CalcResult? {
+    static func evaluate(
+        _ raw: String, now: Date, calendar: Calendar, currency: CurrencySource = .off
+    ) -> CalcResult? {
         let query = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, query.count <= 256 else { return nil }
 
@@ -79,6 +82,34 @@ enum CalcEngine {
                         message:
                             "Cannot convert \(from.category.displayName) to \(to.category.displayName)."
                     ))
+            }
+        }
+
+        // Currency runs after units so an all-unit query keeps winning: `10 pounds to kg` is weight,
+        // `10 pounds to euros` is money. Returns nil outright when the user hasn't consented.
+        if let conversion = CalcCurrency.parseConversion(tokens, source: currency) {
+            switch conversion {
+            case .value(let input, let from, let to, let output):
+                let amount = CalcFormatter.currency(output)
+                return CalcResult(
+                    expression: "\(CalcFormatter.display(input)) \(from.code)",
+                    sourceBadge: from.name,
+                    targetBadge: to.name,
+                    payload: .value(
+                        display: "\(CalcFormatter.grouped(amount)) \(to.code)",
+                        copyText: "\(amount) \(to.code)"))
+            case .mismatch(let from, let to):
+                return CalcResult(
+                    expression: query,
+                    payload: .error(message: "Cannot convert \(from) to \(to)."))
+            case .noRate(let code):
+                return CalcResult(
+                    expression: query,
+                    payload: .error(message: "No exchange rate for \(code)."))
+            case .unavailable:
+                return CalcResult(
+                    expression: query,
+                    payload: .error(message: "Exchange rates unavailable — check your connection."))
             }
         }
 

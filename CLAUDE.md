@@ -61,12 +61,29 @@ Never break these without an explicit task to do so.
   frozen instead (resigning shifts the text a point or two). See [palette.md](docs/palette.md).
 - **Focus restoration is load-bearing.** Paste targets the recorded `previousApp` and requires the
   Accessibility permission (`Permissions.ensureAccessibility()`). See [palette.md](docs/palette.md).
-- **`Core/Calculator/` (incl. `CalcDateTime`) must stay Foundation-only** — no AppKit / SwiftUI
-  imports. `Tools/calc-test.swift` compiles the real engine sources. Likewise `Core/Emoji/`
+- **`Core/Calculator/` (incl. `CalcDateTime`) must stay Foundation-only *and pure*** — no AppKit /
+  SwiftUI imports, no clock or network reads. `Tools/calc-test.swift` compiles the real engine
+  sources. Both externally-sourced inputs are injected: the clock via `now`/`calendar`, the FX table
+  via `rates` (`CurrencyRateStore` owns the fetch). Likewise `Core/Emoji/`
   (`EmojiCatalog`, `EmojiGridGeometry`) stays AppKit/SwiftUI-free for `Tools/emoji-test.swift`.
 - **`Tools/fuzz-test.swift` holds a COPY of `FuzzyMatch`** from `Core/AppIndex.swift`. Change the
   scoring in one, mirror it in the other, or the test is meaningless.
-- **`EmojiData.generated.swift` is emitted by `node Tools/gen-emoji.js`** — never edit it by hand.
+- **`EmojiData.generated.swift` is emitted by `node Tools/gen-emoji.js` and
+  `CurrencyData.generated.swift` by `node Tools/gen-currencies.js`** — never edit either by hand.
+  Currency names, signs and uncontested nouns are generated (Frankfurter × CLDR); the only
+  hand-maintained currency data is `CalcCurrency.contested`, the nouns several currencies share
+  (`dollars`, `pounds`). Don't add slang or synonyms there — no source of truth, so they rot.
+- **Every networked feature ships off and is consent-gated.** Tinycast is offline by default; a
+  feature that reaches the network must be opt-in behind a Settings toggle whose dialog names the
+  provider, the cadence and what leaves the machine, and its owning store must re-check consent at
+  every entry point — including on both sides of the `await` around the request, since consent can
+  be withdrawn mid-flight. Consent flags live on the owning store, never in `AppSettings`
+  (`SettingsBackup` mirrors that type, and an import must not grant network access). Model the gate
+  so the *safe* state is the default: `CalcEngine.evaluate`'s `currency:` parameter defaults to
+  `.off`, so forgetting to pass one disables the feature rather than enabling it. Fetch on a private
+  **cacheless** `URLSession` (`.ephemeral`, `urlCache = nil`), never `URLSession.shared` — a cacheable
+  response would leave a second copy in the on-disk `URLCache` that opting out doesn't delete.
+  `CurrencyRateStore` is the reference implementation — follow it rather than inventing a second shape.
 - **Swift 6 language mode: data-race violations are hard errors.** Almost everything is `@MainActor`;
   cross-actor model types are `Sendable`; heavy / IO work (app scan, image decode) is pushed off-main
   via `Task.detached` / `nonisolated`. Keep that boundary. House idioms: `NotificationToken` (RAII) for

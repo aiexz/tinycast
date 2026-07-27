@@ -115,6 +115,7 @@ final class AppCore: ObservableObject {
     let favorites = FavoritesStore()
     let visibility = VisibilityStore()
     let calcHistory = CalculatorHistoryStore()
+    let currencyRates = CurrencyRateStore()
     let emojiIndex = EmojiIndex()
     let frequentEmoji = FrequentEmojiStore()
     let runningApps = RunningAppsMonitor()
@@ -153,6 +154,7 @@ final class AppCore: ObservableObject {
 
         Task { await appIndex.refresh() }
         Task { await emojiIndex.load() }
+        currencyRates.start()
 
         hotKeys.onTogglePalette = { [weak self] in self?.togglePalette() }
         hotKeys.onToggleClipboard = { [weak self] in self?.toggleClipboard() }
