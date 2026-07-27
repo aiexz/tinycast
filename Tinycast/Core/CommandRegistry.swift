@@ -11,6 +11,20 @@ enum CommandID: String, CaseIterable, Sendable {
     case settings = "command:settings"
     case about = "command:about"
     case quit = "command:quit"
+    // Microphone + caffeination launcher commands (shared contract). The microphone
+    // level/caffeination duration args aren't carried by `AppEntry`; the immediate
+    // toggle/caffeinate actions dispatch straight to the controllers, and the
+    // configuration commands switch the palette into the matching `PaletteMode`
+    // (`setMicrophoneLevel/caffeinateFor/Until/While`) where the user picks a
+    // level/duration/app via SystemCommandViews.
+    case toggleMicrophone = "command:toggle-microphone"
+    case setMicrophoneLevel = "command:set-microphone-level"
+    case caffeinate = "command:caffeinate"
+    case decaffeinate = "command:decaffeinate"
+    case toggleCaffeination = "command:toggle-caffeination"
+    case caffeinateFor = "command:caffeinate-for"
+    case caffeinateUntil = "command:caffeinate-until"
+    case caffeinateWhile = "command:caffeinate-while"
 
     var name: String {
         switch self {
@@ -23,6 +37,14 @@ enum CommandID: String, CaseIterable, Sendable {
         case .settings: return "Settings"
         case .about: return "About Tinycast"
         case .quit: return "Quit Tinycast"
+        case .toggleMicrophone: return "Toggle Audio Input"
+        case .setMicrophoneLevel: return "Set Microphone Level"
+        case .caffeinate: return "Caffeinate"
+        case .decaffeinate: return "Decaffeinate"
+        case .toggleCaffeination: return "Toggle Caffeination"
+        case .caffeinateFor: return "Caffeinate for…"
+        case .caffeinateUntil: return "Caffeinate Until"
+        case .caffeinateWhile: return "Caffeinate While"
         }
     }
 
@@ -37,6 +59,14 @@ enum CommandID: String, CaseIterable, Sendable {
         case .settings: return "gearshape"
         case .about: return "info.circle"
         case .quit: return "power"
+        case .toggleMicrophone: return "mic.slash"
+        case .setMicrophoneLevel: return "slider.vertical.3"
+        case .caffeinate: return "cup.and.saucer.fill"
+        case .decaffeinate: return "cup.and.saucer"
+        case .toggleCaffeination: return "circle.dotted"
+        case .caffeinateFor: return "timer"
+        case .caffeinateUntil: return "clock.badge.checkmark"
+        case .caffeinateWhile: return "macwindow"
         }
     }
 }

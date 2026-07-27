@@ -141,6 +141,8 @@ private struct AppRow: View {
     @EnvironmentObject private var hotKeys: HotKeyManager
     /// Observed for the same reason: the Hyper Key display settings (✦ collapse, Include Shift) change how `keycaps` renders.
     @ObservedObject private var settings = AppCore.shared.settings
+    /// ponytail: live `Caffeinated`/`Decaffeinated` trailing label for the Toggle Caffeination row; every other row keeps its static `kindLabel`.
+    @ObservedObject private var caffeination = AppCore.shared.caffeinationController
     @State private var hovered = false
 
     /// Selection wins over hover when a row is both; otherwise hover shows its fainter layer.
@@ -156,6 +158,15 @@ private struct AppRow: View {
             let shortcut = hotKeys.shortcut(for: action)
         else { return nil }
         return shortcut.keycaps
+    }
+
+    /// `kindLabel` for ordinary rows; live `Caffeinated`/`Decaffeinated` for the Toggle Caffeination row, observed from the controller so it updates when mode flips.
+    private var trailingLabel: String {
+        if app.id == CommandID.toggleCaffeination.rawValue {
+            caffeination.isActive ? "Caffeinated" : "Decaffeinated"
+        } else {
+            app.kindLabel
+        }
     }
 
     var body: some View {
@@ -181,7 +192,7 @@ private struct AppRow: View {
                 }
             }
             Spacer()
-            Text(app.kindLabel)
+            Text(trailingLabel)
                 .font(Theme.Typography.rowTrailing)
                 .foregroundStyle(.secondary)
         }

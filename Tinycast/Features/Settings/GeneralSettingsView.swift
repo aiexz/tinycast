@@ -230,6 +230,74 @@ struct GeneralSettingsView: View {
                     }
                 }
             }
+
+            SettingsCard(header: "Extensions") {
+                SettingsRow(
+                    title: "Microphone",
+                    subtitle: "Show a menu-bar indicator that reflects the current mute state.",
+                    systemImage: "microphone",
+                    tint: .blue
+                ) {
+                    Toggle("", isOn: $settings.showMicrophoneMenuBar)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                if settings.showMicrophoneMenuBar {
+                    SettingsRow(
+                        title: "Hide icon when unmuted",
+                        subtitle: "Only show the indicator while the microphone is muted.",
+                        systemImage: "eye.slash",
+                        tint: .secondary
+                    ) {
+                        Toggle("", isOn: $settings.micHideIconWhenUnmuted)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+                    SettingsDivider()
+                    SettingsRow(
+                        title: "Muted icon color",
+                        subtitle: "Choose the muted microphone indicator color.",
+                        systemImage: "paintpalette",
+                        tint: .secondary
+                    ) {
+                        Picker("", selection: $settings.micMutedTintRed) {
+                            Text("Red").tag(true)
+                            Text("System").tag(false)
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    SettingsDivider()
+                } else {
+                    SettingsDivider()
+                }
+                SettingsRow(
+                    title: "Coffee",
+                    subtitle: "Show a menu-bar indicator that reflects the current caffeination state.",
+                    systemImage: "cup.and.saucer",
+                    tint: .brown
+                ) {
+                    Toggle("", isOn: $settings.showCoffeeMenuBar)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
+                if settings.showCoffeeMenuBar {
+                    SettingsRow(
+                        title: "Hide icon when decaffeinated",
+                        subtitle: "Only show the indicator while a caffeination session is active.",
+                        systemImage: "eye.slash",
+                        tint: .secondary
+                    ) {
+                        Toggle("", isOn: $settings.coffeeHideWhenDecaffeinated)
+                            .labelsHidden()
+                            .toggleStyle(.switch)
+                            .controlSize(.small)
+                    }
+                }
+            }
         }
     }
 }

@@ -79,6 +79,8 @@ struct RootPaletteView: View {
         case .clipboard: return clipResults.count
         case .calculatorHistory: return histResults.count + calcCount
         case .emoji: return emojiResults.count
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil: return 1
+        case .caffeinateWhile: return SystemCommandActions.runningApps.count
         }
     }
     /// Selection clamped into the current results — the single source of truth for highlight, preview and activation so the list and preview can never disagree.
@@ -145,6 +147,8 @@ struct RootPaletteView: View {
                 return EmojiActionsMenu.content(
                     entry: emoji, core: core, target: vm.pasteTarget)
             }
+            return nil
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
             return nil
         }
     }
@@ -372,7 +376,7 @@ struct RootPaletteView: View {
                 let index = selection - calcCount
                 guard command, histResults.indices.contains(index) else { return .ignored }
                 core.copyHistoryExpression(histResults[index])
-            case .launcher:
+            case .launcher, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
                 return .ignored
             }
             return .handled
@@ -415,7 +419,7 @@ struct RootPaletteView: View {
                 deleteSelectedClip()
             case .calculatorHistory:
                 deleteSelectedHistoryEntry()
-            case .launcher, .emoji:
+            case .launcher, .emoji, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
                 return .ignored
             }
             return .handled
@@ -589,6 +593,8 @@ struct RootPaletteView: View {
                     }
                 )
             }
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
+            SystemCommandView(mode: vm.mode, query: vm.query, selection: selection)
         }
     }
 
@@ -644,6 +650,8 @@ struct RootPaletteView: View {
             return vm.pasteTarget?.pasteTitle ?? "Paste"
         case .calculatorHistory:
             return "Copy Answer"
+        case .setMicrophoneLevel: return "Set Level"
+        case .caffeinateFor, .caffeinateUntil, .caffeinateWhile: return "Caffeinate"
         case .launcher:
             if calcActionable { return "Copy Answer" }
             switch selectedApp?.kind {
@@ -749,6 +757,13 @@ struct RootPaletteView: View {
         case .emoji:
             guard emojiResults.indices.contains(selection) else { return }
             core.pasteEmoji(emojiResults[selection])
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil:
+            SystemCommandActions.submit(mode: vm.mode, query: vm.query)
+        case .caffeinateWhile:
+            let apps = SystemCommandActions.runningApps
+            guard apps.indices.contains(selection) else { return }
+            Task { await core.caffeinationController.caffeinateWhileApp(.bundleID(apps[selection].id)) }
+            core.hidePalette(restoreFocus: false)
         }
     }
 }

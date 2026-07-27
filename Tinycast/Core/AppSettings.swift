@@ -4,6 +4,15 @@ import SwiftUI
 enum SettingsKey {
     /// Menu-bar icon visibility — read by `MenuBarExtra(isInserted:)` and the Settings toggle.
     static let showInMenuBar = "showInMenuBar"
+    /// Microphone menu-bar indicator visibility — read by `SystemStatusItems` and the Settings toggle.
+    static let showMicrophoneMenuBar = "showMicrophoneMenuBar"
+    /// Coffee menu-bar indicator visibility — read by `SystemStatusItems` and the Settings toggle.
+    static let showCoffeeMenuBar = "showCoffeeMenuBar"
+    /// Raycast preference: hide the mic icon when unmuted (mute-only visibility).
+    static let micHideIconWhenUnmuted = "micHideIconWhenUnmuted"
+    /// Raycast preference: hide the coffee icon when no caffeination is active.
+    static let coffeeHideWhenDecaffeinated = "coffeeHideWhenDecaffeinated"
+    static let micMutedTintRed = "micMutedTintRed"
 }
 
 /// Delay before a closed palette resets to the root launcher; raw value is seconds in UserDefaults, so an unset key (0) reads as `.immediately`, the default.
@@ -38,6 +47,11 @@ final class AppSettings: ObservableObject {
         static let popToRootTimeout = "popToRootTimeout"
         static let compactMode = "compactMode"
         static let showFavoritesInCompactMode = "showFavoritesInCompactMode"
+        static let showMicrophoneMenuBar = SettingsKey.showMicrophoneMenuBar
+        static let showCoffeeMenuBar = SettingsKey.showCoffeeMenuBar
+        static let micHideIconWhenUnmuted = SettingsKey.micHideIconWhenUnmuted
+        static let coffeeHideWhenDecaffeinated = SettingsKey.coffeeHideWhenDecaffeinated
+        static let micMutedTintRed = SettingsKey.micMutedTintRed
     }
 
     @Published var clipboardRetention: ClipboardRetention {
@@ -92,6 +106,32 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(showFavoritesInCompactMode, forKey: Key.showFavoritesInCompactMode) }
     }
 
+    // MARK: - Menu-bar indicator preferences (Raycast-equivalent)
+
+    /// Show the microphone menu-bar indicator. Independent of the coffee indicator.
+    @Published var showMicrophoneMenuBar: Bool {
+        didSet { defaults.set(showMicrophoneMenuBar, forKey: Key.showMicrophoneMenuBar) }
+    }
+
+    /// Show the coffee menu-bar indicator. Independent of the microphone indicator.
+    @Published var showCoffeeMenuBar: Bool {
+        didSet { defaults.set(showCoffeeMenuBar, forKey: Key.showCoffeeMenuBar) }
+    }
+
+    /// Raycast mic preference: hide the icon when unmuted so the indicator only appears while muted.
+    @Published var micHideIconWhenUnmuted: Bool {
+        didSet { defaults.set(micHideIconWhenUnmuted, forKey: Key.micHideIconWhenUnmuted) }
+    }
+
+    /// Raycast coffee preference: hide the icon when no caffeination is active (decaffeinated).
+    @Published var coffeeHideWhenDecaffeinated: Bool {
+        didSet { defaults.set(coffeeHideWhenDecaffeinated, forKey: Key.coffeeHideWhenDecaffeinated) }
+    }
+
+    @Published var micMutedTintRed: Bool {
+        didSet { defaults.set(micMutedTintRed, forKey: Key.micMutedTintRed) }
+    }
+
     init() {
         // integer(forKey:) returns 0 when unset, which no case matches — falls through to 3 Months.
         clipboardRetention =
@@ -124,5 +164,16 @@ final class AppSettings: ObservableObject {
         showFavoritesInCompactMode =
             defaults.object(forKey: Key.showFavoritesInCompactMode) == nil
             || defaults.bool(forKey: Key.showFavoritesInCompactMode)
+        // Visibility toggles default to true; absence must be distinguished from a stored `false`.
+        showMicrophoneMenuBar =
+            defaults.object(forKey: Key.showMicrophoneMenuBar) == nil
+            || defaults.bool(forKey: Key.showMicrophoneMenuBar)
+        showCoffeeMenuBar =
+            defaults.object(forKey: Key.showCoffeeMenuBar) == nil
+            || defaults.bool(forKey: Key.showCoffeeMenuBar)
+        // Raycast hide-when preferences default to false; a plain `bool(forKey:)` read already does the right thing.
+        micHideIconWhenUnmuted = defaults.bool(forKey: Key.micHideIconWhenUnmuted)
+        coffeeHideWhenDecaffeinated = defaults.bool(forKey: Key.coffeeHideWhenDecaffeinated)
+        micMutedTintRed = defaults.object(forKey: Key.micMutedTintRed) == nil || defaults.bool(forKey: Key.micMutedTintRed)
     }
 }

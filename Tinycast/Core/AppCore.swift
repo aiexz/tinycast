@@ -6,7 +6,14 @@ enum PaletteMode: String, CaseIterable, Identifiable {
     case clipboard
     case calculatorHistory
     case emoji
-
+    // System command modes that render inside the palette (Tinycast/Features/System/SystemCommandViews),
+    // matching the Raycast Microphone + Coffee command surface. The no-view immediate actions
+    // (Caffeinate/Decaffeinate/Toggle Microphone/Toggle Caffeination) stay plain commands; the five
+    // bellow take an arg the launcher can't carry, so they switch the palette into these modes.
+    case setMicrophoneLevel
+    case caffeinateFor
+    case caffeinateUntil
+    case caffeinateWhile
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -14,6 +21,10 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .calculatorHistory: return "Calculator History"
         case .emoji: return "Emoji & Symbols"
+        case .setMicrophoneLevel: return "Microphone"
+        case .caffeinateFor: return "Caffeinate for"
+        case .caffeinateUntil: return "Caffeinate Until"
+        case .caffeinateWhile: return "Caffeinate While"
         }
     }
     var systemImage: String {
@@ -22,6 +33,10 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.doc"
         case .calculatorHistory: return "plus.forwardslash.minus"
         case .emoji: return "face.smiling"
+        case .setMicrophoneLevel: return "microphone"
+        case .caffeinateFor: return "timer"
+        case .caffeinateUntil: return "clock.badge.checkmark"
+        case .caffeinateWhile: return "macwindow"
         }
     }
     var placeholder: String {
@@ -30,6 +45,10 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Type to filter entries…"
         case .calculatorHistory: return "Do math, convert units, or search your past calculations…"
         case .emoji: return "Search emoji and symbols…"
+        case .setMicrophoneLevel: return "Set the microphone input level…"
+        case .caffeinateFor: return "Keep awake for a duration, e.g. 5m, 2h…"
+        case .caffeinateUntil: return "Keep awake until a time or date, e.g. 9am, 5pm, april 9…"
+        case .caffeinateWhile: return "Pick an app to keep the Mac awake while it's running…"
         }
     }
 }
@@ -102,11 +121,22 @@ final class AppCore: ObservableObject {
     let appUsage = AppUsageStore()
     let palette = PaletteViewModel()
 
+    // System integration: microphone mute/level + caffeination assertions + the two persistent
+    // menu-bar status items reflecting their state. AppCore owns the controllers; `SystemStatusItems`
+    // observes them via Combine (never owns them) so a single source of truth drives both the icons
+    // and Swift state. Feature behavior and palette views live together in Features/System;
+    // AppCore remains their single lifecycle owner.
+    let microphoneController = MicrophoneController()
+    let caffeinationController = CaffeinationController()
+    let systemStatusItems: SystemStatusItems
+
     private lazy var windowController = PaletteWindowController(core: self)
     private let auxWindows = AuxWindowController()
 
     private init() {
         clipboardManager = ClipboardManager(store: clipboardStore, settings: settings)
+        // Status items observe the controllers, so they're constructed last; no I/O happens until `start()`.
+        systemStatusItems = SystemStatusItems(microphone: microphoneController, caffeination: caffeinationController)
     }
 
     func start() {
@@ -131,12 +161,23 @@ final class AppCore: ObservableObject {
         hotKeys.start()
         // Deliberately keeps running while `hotKeys.recordingAction` pauses Carbon: the recorder relies on the tap's rewritten flags to capture Hyper shortcuts.
         hyperKeyTap.start(settings: settings)
+        // System integration: start the caffeination tick, hydrate mic level off-main (short-lived
+        // osascript reads), and build the menu-bar status items last so their Combine subscriptions
+        // see settled controllers. No blocking process work here — all I/O is detached.
+        caffeinationController.start()
+        Task { await microphoneController.refresh() }
+        systemStatusItems.start()
 
         // First launch has no palette hotkey bound and shows nothing but the menu-bar icon; guide the user once. Marker is written at show-time so it stays one-time even if they Cmd-Q mid-flow.
         if !OnboardingState.hasOnboarded {
             OnboardingState.markShown()
             showOnboarding()
         }
+    }
+    /// Tear down child processes and menu-bar artifacts before the app exits; called from `AppDelegate.applicationWillTerminate` alongside the existing `hyperKeyTap` cleanup. Order matters: terminate the caffeinate child *before* removing the status items so the menu-bar indicator never flashes a stale asserting state, and never `killall caffeinate` — only the process this app owns is touched.
+    func prepareForTermination() {
+        caffeinationController.prepareForTermination()
+        systemStatusItems.stop()
     }
 
 
@@ -312,6 +353,32 @@ final class AppCore: ObservableObject {
         case .about:
             hidePalette(restoreFocus: false)
             showAbout()
+        // Microphone + Caffeination commands. The four immediate actions (Caffeinate/
+        // Decaffeinate/Toggle Microphone/Toggle Caffeination) dispatch straight to the
+        // controllers (off-main, in a Task so the palette tear-down isn't delayed); the
+        // four arg-bearing commands (set level, caffeinate for/until/while) need
+        // input the launcher can't carry, so they switch the palette into the matching
+        // `PaletteMode` where the SystemCommandViews surface collects it.
+        case .toggleMicrophone:
+            hidePalette(restoreFocus: false)
+            Task { await microphoneController.toggleMuted() }
+        case .setMicrophoneLevel:
+            showPalette(mode: .setMicrophoneLevel)
+        case .caffeinate:
+            hidePalette(restoreFocus: false)
+            Task { await caffeinationController.caffeinate() }
+        case .decaffeinate:
+            hidePalette(restoreFocus: false)
+            Task { await caffeinationController.decaffeinate() }
+        case .toggleCaffeination:
+            hidePalette(restoreFocus: false)
+            Task { await caffeinationController.toggle() }
+        case .caffeinateFor:
+            showPalette(mode: .caffeinateFor)
+        case .caffeinateUntil:
+            showPalette(mode: .caffeinateUntil)
+        case .caffeinateWhile:
+            showPalette(mode: .caffeinateWhile)
         case .quit:
             NSApp.terminate(nil)
         case nil:
