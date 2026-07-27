@@ -43,21 +43,38 @@ jobs:
         run: |
           CHANNEL="${{ github.event.inputs.channel }}"
           BASE_VERSION="${{ github.event.inputs.version }}"
-          # Each channel is a distinct, side-by-side app: its own display name + bundle id,
-          # and its own Homebrew cask in the abue-ammar/homebrew-tinycast tap.
+          # Each channel is a distinct, side-by-side app: its own display name + bundle id.
           case "$CHANNEL" in
-            beta)   SUFFIX="-beta.${GITHUB_RUN_NUMBER}";  DISPLAY="Tinycast Beta";  BUNDLE="com.tinycast.app.beta";  CASK="tinycast@beta";  PRERELEASE=true ;;
-            stable) SUFFIX="";                            DISPLAY="Tinycast";       BUNDLE="com.tinycast.app";       CASK="tinycast";       PRERELEASE=false ;;
+            beta)   SUFFIX="-beta.${GITHUB_RUN_NUMBER}";  DISPLAY="Tinycast Beta";  BUNDLE="com.tinycast.app.beta";  PRERELEASE=true ;;
+            stable) SUFFIX="";                            DISPLAY="Tinycast";       BUNDLE="com.tinycast.app";       PRERELEASE=false ;;
           esac
           FULL="${BASE_VERSION}${SUFFIX}"
           {
             echo "full_version=${FULL}"
             echo "display_name=${DISPLAY}"
             echo "bundle_id=${BUNDLE}"
-            echo "cask_name=${CASK}"
             echo "dmg_file=Tinycast-${FULL}.dmg"
             echo "prerelease=${PRERELEASE}"
           } >> "$GITHUB_OUTPUT"
+
+      # Fail fast before touching keychain crypto: signing secrets must be present.
+      # The repo owner sets SIGNING_P12_BASE64 / SIGNING_P12_PASSWORD (docs/signing.md §2).
+      - name: Verify signing secrets
+        env:
+          P12_BASE64: ${{ secrets.SIGNING_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+        run: |
+          if [ -z "${P12_BASE64}" ] || [ -z "${P12_PASSWORD}" ]; then
+            echo "::error::SIGNING_P12_BASE64 and/or SIGNING_P12_PASSWORD secret not set. \
+          These repo secrets hold the stable self-signed signing identity (see docs/signing.md §2) \
+          and are required for every release."
+            exit 1
+          fi
+          if ! printf '%s' "${P12_BASE64}" | base64 --decode >/dev/null 2>/dev/null; then
+            echo "::error::SIGNING_P12_BASE64 is not valid base64. Re-export the P12 as base64 per docs/signing.md §2."
+            exit 1
+          fi
+          echo "Signing secrets present, base64 decodes cleanly."
 
       # Import the stable self-signed identity into a temp keychain so every release is signed with
       # the SAME cert — that constant signature is what keeps users' Accessibility (TCC) grant alive
@@ -123,96 +140,27 @@ jobs:
           if [ "${{ steps.meta.outputs.prerelease }}" = "true" ]; then
             PRERELEASE_FLAG="--prerelease"
           fi
+          REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
           gh release create "$TAG" \
             "dist/${{ steps.meta.outputs.dmg_file }}" \
+            --repo "$GITHUB_REPOSITORY" \
             --title "${{ steps.meta.outputs.display_name }} ${{ steps.meta.outputs.full_version }}" \
             --notes "**Channel:** ${{ github.event.inputs.channel }}
           **Version:** ${{ steps.meta.outputs.full_version }}
           **Bundle ID:** \`${{ steps.meta.outputs.bundle_id }}\`
-          Built from ${{ github.sha }}.
+          Built from [\`${GITHUB_SHA:0:7}\`](${REPO_URL}/commit/${GITHUB_SHA}).
 
-          **Recommended:** install via Homebrew — it clears the quarantine flag automatically on every install and update, so there's nothing to run by hand:
-          \`\`\`sh
-          brew trust --tap abue-ammar/tinycast
-          brew install --cask abue-ammar/tinycast/${{ steps.meta.outputs.cask_name }}
-          \`\`\`
-          This build is self-signed. If you download the DMG directly instead of using Homebrew, macOS will refuse to open it until you clear the quarantine flag once:
+          ### Install
+
+          Download **\`${{ steps.meta.outputs.dmg_file }}\`** from the assets below, open it, and drag \`${{ steps.meta.outputs.display_name }}\` into /Applications.
+
+          ### Self-signed app — Gatekeeper
+
+          Tinycast is signed with a stable self-signed identity (not an Apple Developer ID), so macOS will refuse to open it on first launch. Clear the quarantine flag once after copying it out of the DMG:
+
           \`\`\`sh
           xattr -dr com.apple.quarantine \"/Applications/${{ steps.meta.outputs.display_name }}.app\"
-          \`\`\`" \
+          \`\`\`
+
+          Then launch from the Applications folder, and grant **Accessibility** permission when prompted. The fixed \`${{ steps.meta.outputs.bundle_id }}\` identity keeps that grant alive across future updates from this repository." \
             $PRERELEASE_FLAG
-
-      - name: Update Homebrew cask
-        env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          CASK: ${{ steps.meta.outputs.cask_name }}
-          VERSION: ${{ steps.meta.outputs.full_version }}
-          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
-        run: |
-          if [ -z "${TAP_TOKEN}" ]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN secret not set — skipping cask bump. Add it to enable auto-updates of the tap."
-            exit 0
-          fi
-          SHA="$(shasum -a 256 "dist/${DMG_FILE}" | awk '{print $1}')"
-          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/abue-ammar/homebrew-tinycast.git" tap
-          CASK_FILE="tap/Casks/${CASK}.rb"
-          if [ ! -f "$CASK_FILE" ]; then
-            echo "::error::$CASK_FILE not found in tap."
-            exit 1
-          fi
-          sed -i '' -E "s|^  version \".*\"|  version \"${VERSION}\"|" "$CASK_FILE"
-          sed -i '' -E "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" "$CASK_FILE"
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "Casks/${CASK}.rb"
-          if git diff --cached --quiet; then
-            echo "No cask changes to commit."
-          else
-            git commit -m "${CASK} ${VERSION}"
-            git push
-          fi
-
-      # Announce the release in the Discord release channel. A Components V2 (flags 32768) card:
-      # channel-tinted container, title + right-aligned Download button, Homebrew install block.
-      # No-ops with a warning if the webhook secret isn't set.
-      - name: Announce on Discord
-        if: success()
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          CHANNEL: ${{ github.event.inputs.channel }}
-          DISPLAY_NAME: ${{ steps.meta.outputs.display_name }}
-          VERSION: ${{ steps.meta.outputs.full_version }}
-          CASK: ${{ steps.meta.outputs.cask_name }}
-          TAG: v${{ steps.meta.outputs.full_version }}
-        run: |
-          if [ -z "${DISCORD_WEBHOOK_URL}" ]; then
-            echo "::warning::DISCORD_WEBHOOK_URL secret not set — skipping Discord announcement."
-            exit 0
-          fi
-          if [ "${CHANNEL}" = "stable" ]; then COLOR=3066993; else COLOR=15844367; fi
-          RELEASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
-          INSTALL="brew install --cask abue-ammar/tinycast/${CASK}"
-          # Build with jq so backticks stay literal (printf in single quotes escaped them,
-          # which Discord rendered as verbatim backticks instead of a code block).
-          jq -n \
-            --argjson color "${COLOR}" \
-            --arg heading "## 🚀 ${DISPLAY_NAME} ${VERSION}" \
-            --arg sub "Now available on the **${CHANNEL}** channel." \
-            --arg install "${INSTALL}" \
-            --arg url "${RELEASE_URL}" \
-            '{
-              flags: 32768,
-              components: [
-                { type: 17, accent_color: $color, components: [
-                  { type: 9,
-                    components: [ { type: 10, content: ($heading + "\n" + $sub) } ],
-                    accessory: { type: 2, style: 5, label: "Download", url: $url }
-                  },
-                  { type: 14 },
-                  { type: 10, content: ("**Install / update via Homebrew**\n```\n" + $install + "\n```") }
-                ] }
-              ]
-            }' > payload.json
-          curl -fsS -X POST -H "Content-Type: application/json" -d @payload.json \
-            "${DISCORD_WEBHOOK_URL}?with_components=true"
