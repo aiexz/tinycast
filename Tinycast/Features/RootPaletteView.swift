@@ -176,56 +176,60 @@ struct RootPaletteView: View {
         let showActionGroup = count > 0 && !(calcSelected && !calcActionable)
 
         // The `header` (and its single search field) is always attached in the same position via safeAreaInset so its focus survives the compact↔expanded swap — only the results below it toggle. Collapsed shows the bar alone; expanded floats header + action bar over the list with edge-dissolve (see docs/ui.md).
-        return Group {
-            if isCollapsed {
-                Color.clear
-            } else {
-                content(
-                    apps: apps, clips: clips, hist: hist, emojiSections: emojiSections, calc: calc,
-                    selection: sel, favoriteCount: favoriteCount, showSections: showSections
-                )
+        let surface = AnyView(
+            Group {
+                if isCollapsed {
+                    Color.clear
+                } else {
+                    content(
+                        apps: apps, clips: clips, hist: hist, emojiSections: emojiSections, calc: calc,
+                        selection: sel, favoriteCount: favoriteCount, showSections: showSections
+                    )
+                }
             }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) { header }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !isCollapsed {
-                bottomBar(pillLabel: pillLabel, showActionGroup: showActionGroup)
+            .safeAreaInset(edge: .top, spacing: 0) { header }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !isCollapsed {
+                    bottomBar(pillLabel: pillLabel, showActionGroup: showActionGroup)
+                }
             }
-        }
-        // Menus are in-window overlays anchored to a bottom corner, so they stay clipped inside the panel — never a system popover spilling outside the window.
-        .overlay {
-            if showAppMenu || showActions {
-                Color.black.opacity(0.001)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: closeMenus)
+            // Menus are in-window overlays anchored to a bottom corner, so they stay clipped inside the panel — never a system popover spilling outside the window.
+            .overlay {
+                if showAppMenu || showActions {
+                    Color.black.opacity(0.001)
+                        .contentShape(Rectangle())
+                        .onTapGesture(perform: closeMenus)
+                }
             }
-        }
-        .overlay(alignment: .bottomLeading) {
-            if showAppMenu {
-                let content = appMenuContent
-                PopoverMenu(
-                    header: content.header, items: content.items, selection: $menuSelection,
-                    onActivate: activateMenuItem
-                )
-                .padding(Self.menuInset)
-                .transition(Self.menuTransition(.bottomLeading))
+            .overlay(alignment: .bottomLeading) {
+                if showAppMenu {
+                    let content = appMenuContent
+                    PopoverMenu(
+                        header: content.header, items: content.items, selection: $menuSelection,
+                        onActivate: activateMenuItem
+                    )
+                    .padding(Self.menuInset)
+                    .transition(Self.menuTransition(.bottomLeading))
+                }
             }
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if showActions, let content = actionsContent {
-                PopoverMenu(
-                    header: content.header, items: content.items, selection: $menuSelection,
-                    onActivate: activateMenuItem
-                )
-                .padding(Self.menuInset)
-                .transition(Self.menuTransition(.bottomTrailing))
+            .overlay(alignment: .bottomTrailing) {
+                if showActions, let content = actionsContent {
+                    PopoverMenu(
+                        header: content.header, items: content.items, selection: $menuSelection,
+                        onActivate: activateMenuItem
+                    )
+                    .padding(Self.menuInset)
+                    .transition(Self.menuTransition(.bottomTrailing))
+                }
             }
-        }
-        // The window's own frame (driven by `PaletteWindowController`) is the size source of truth; filling it keeps the glass background and corner clip matched to the current compact/expanded window height.
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(Color.black.opacity(Theme.Colors.panelDimming))
-        .background(VisualEffectView())
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous))
+            // The window's own frame (driven by `PaletteWindowController`) is the size source of truth; filling it keeps the glass background and corner clip matched to the current compact/expanded window height.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color.black.opacity(Theme.Colors.panelDimming))
+            .background(VisualEffectView())
+            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous))
+        )
+
+        return surface
         // Every show bumps focusToken — refocus search and drop any menu left open from last time (e.g. dismissed by clicking away with a context menu up).
         .onChange(of: vm.focusToken) {
             searchFocused = true
