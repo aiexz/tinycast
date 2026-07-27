@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: macos-26
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode 26
+        run: |
+          set -euo pipefail
+          XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
+          if [ -z "$XCODE_PATH" ]; then
+            echo "::error::No Xcode 26.x found on this runner. Installed Xcodes:"
+            ls /Applications | grep -i xcode || true
+            exit 1
+          fi
+          echo "Using $XCODE_PATH"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
+
+      - name: Build Tinycast (Debug)
+        run: |
+          set -euo pipefail
+          xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Debug \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build
+
+      - name: Fuzz matcher harness
+        run: swift Tools/fuzz-test.swift
+
+      - name: Calculator engine harness
+        run: |
+          set -euo pipefail
+          swiftc Tinycast/Core/Calculator/*.swift Tools/calc-test.swift -o "$RUNNER_TEMP/calc-test"
+          "$RUNNER_TEMP/calc-test"
+
+      - name: Emoji catalog + grid harness
+        run: |
+          set -euo pipefail
+          swiftc \
+            Tinycast/Core/Emoji/EmojiCatalog.swift \
+            Tinycast/Core/Emoji/EmojiGridGeometry.swift \
+            Tinycast/Core/Emoji/EmojiData.generated.swift \
+            Tools/emoji-test.swift \
+            -o "$RUNNER_TEMP/emoji-test"
+          "$RUNNER_TEMP/emoji-test"
