@@ -97,9 +97,9 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed 's/"//g')
           rm -f "$RUNNER_TEMP/cert.p12"
 
-      # Build the signed .app into an ephemeral DerivedData dir. Channel identity (name, bundle id,
-      # version) comes from build-setting overrides so beta/stable ship side-by-side.
-      - name: Build app
+      # Xcode rejects an untrusted self-signed certificate during build-setting validation even
+      # when it is present in the keychain. Build unsigned, then sign the finished bundle directly.
+      - name: Build and sign app
         env:
           VERSION: ${{ steps.meta.outputs.full_version }}
           DISPLAY_NAME: ${{ steps.meta.outputs.display_name }}
@@ -108,11 +108,14 @@ jobs:
         run: |
           xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Release \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="Tinycast Self-Signed" \
-            OTHER_CODE_SIGN_FLAGS="--timestamp=none" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             PRODUCT_NAME="$DISPLAY_NAME" PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" \
             MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             build
+          APP="$RUNNER_TEMP/DerivedData/Build/Products/Release/${DISPLAY_NAME}.app"
+          codesign --force --sign "Tinycast Self-Signed" --timestamp=none \
+            --entitlements Tinycast/Tinycast.entitlements "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
 
       # Pack the .app + an /Applications symlink into a compressed DMG under dist/.
       - name: Package DMG
