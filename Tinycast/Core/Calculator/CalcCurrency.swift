@@ -39,7 +39,7 @@ enum CurrencySource: Equatable, Sendable {
 
 enum CalcCurrency {
     enum ConversionParse: Equatable {
-        case value(input: Double, from: CurrencyDef, to: CurrencyDef, output: Double)
+        case value(input: Double, from: CurrencyDef, to: CurrencyDef, output: Double, rateUnit: String?)
         /// One side is a currency, the other a measurement unit — `10 usd to kg`.
         case mismatch(from: String, to: String)
         /// Both sides are currencies but the snapshot doesn't quote one of them.
@@ -52,16 +52,49 @@ enum CalcCurrency {
     static let categoryName = "Currency"
 
     /// Detects `expr currency (to|in|->) currency`, mirroring `CalcUnits.parseConversion`'s shape so both read the same. Runs *after* the unit path, so a query both sides of which are compatible units (`10 pounds to kg`) never reaches here. A missing amount defaults to 1, so `eur to usd` reads as `1 eur to usd`.
-    static func parseConversion(_ tokens: [CalcToken], source: CurrencySource) -> ConversionParse? {
-        // The consent gate, before any parsing: without it the feature does not exist.
+    static func parseConversion(_ inputTokens: [CalcToken], source: CurrencySource) -> ConversionParse? {
         guard case .on(let rates) = source else { return nil }
-        let tokens = amountFirst(tokens)
+        if inputTokens.count == 2,
+            case .ident(let from) = inputTokens[0], byName[from] != nil,
+            case .ident(let to) = inputTokens[1], byName[to] != nil
+        {
+            return parseConversion([.number(1), .ident(from), .ident("to"), .ident(to)], source: source)
+        }
+
+        var tokens = amountFirst(inputTokens)
+        var rateUnit: String?
+
+        // `USD1K in GBP`, `$5K to EUR`, and `10K in GBP` (bare shorthand defaults to USD).
+        if case .ident(let shorthand) = tokens.first,
+            let expanded = expandPrefixedShorthand(shorthand)
+        {
+            tokens.replaceSubrange(0...0, with: [.number(expanded.amount), .ident(expanded.code)])
+        } else if tokens.count >= 3, case .number(let amount) = tokens[0],
+            case .ident(let code) = tokens[1], byName[code] != nil,
+            case .ident(let suffix) = tokens[2], let multiplier = shorthandMultiplier(suffix)
+        {
+            tokens.replaceSubrange(0...2, with: [.number(amount * multiplier), .ident(code)])
+        } else if tokens.count >= 2, case .number(let amount) = tokens[0],
+            case .ident(let suffix) = tokens[1], let multiplier = shorthandMultiplier(suffix)
+        {
+            tokens.replaceSubrange(0...1, with: [.number(amount * multiplier), .ident("usd")])
+        }
+
+        // Preserve a simple per-time denominator: `8 dollars/hour in gbp`.
+        if tokens.count >= 6, case .op("/") = tokens[tokens.count - 4],
+            case .ident(let unit) = tokens[tokens.count - 3]
+        {
+            rateUnit = canonicalRateUnit(unit)
+            guard rateUnit != nil else { return nil }
+            tokens.removeSubrange((tokens.count - 4)..<(tokens.count - 2))
+        }
+
+        tokens = amountFirst(tokens)
         guard tokens.count >= 3, CalcUnits.isConnector(tokens[tokens.count - 2]),
             case .ident(let toName) = tokens[tokens.count - 1],
             case .ident(let fromName) = tokens[tokens.count - 3]
         else { return nil }
 
-        // A side that is only a currency is what engages this path; a side that is neither currency nor unit is just a typo, and gets no card.
         switch (byName[fromName], byName[toName]) {
         case (nil, nil):
             return nil
@@ -88,7 +121,36 @@ enum CalcCurrency {
             guard let output = rates.convert(input, from: from.code, to: to.code) else {
                 return .noRate(code: to.code)
             }
-            return .value(input: input, from: from, to: to, output: output)
+            return .value(
+                input: input, from: from, to: to, output: output, rateUnit: rateUnit)
+        }
+    }
+
+    private static func expandPrefixedShorthand(_ text: String) -> (amount: Double, code: String)? {
+        guard text.count >= 5 else { return nil }
+        let code = String(text.prefix(3))
+        guard byName[code] != nil, let multiplier = shorthandMultiplier(String(text.suffix(1))) else {
+            return nil
+        }
+        let number = String(text.dropFirst(3).dropLast())
+        guard let amount = Double(number) else { return nil }
+        return (amount * multiplier, code)
+    }
+
+    private static func shorthandMultiplier(_ suffix: String) -> Double? {
+        switch suffix {
+        case "k": return 1_000
+        case "m": return 1_000_000
+        case "b": return 1_000_000_000
+        default: return nil
+        }
+    }
+
+    private static func canonicalRateUnit(_ unit: String) -> String? {
+        switch unit {
+        case "h", "hr", "hrs", "hour", "hours": return "hour"
+        case "d", "day", "days": return "day"
+        default: return nil
         }
     }
 
@@ -107,6 +169,28 @@ enum CalcCurrency {
     /// the calculator has to. The count is how many of the feed's currencies claim that word.
     /// Everything unambiguous — names, signs, and 129 uncontested nouns — is generated.
     /// `pound`/`pounds` deliberately overlaps `CalcUnits`' weight; the pipeline order resolves it.
+    /// Curated popular assets only. Coinbase exposes hundreds of tickers; accepting all would make
+    /// ordinary launcher searches and fiat/unit aliases ambiguous.
+    static let crypto: [(code: String, name: String, aliases: [String])] = [
+        ("BTC", "Bitcoin", ["bitcoin"]),
+        ("ETH", "Ethereum", ["ethereum", "ether"]),
+        ("SOL", "Solana", ["solana"]),
+        ("POL", "Polygon", ["polygon"]),
+        ("TON", "Toncoin", ["toncoin"]),
+        ("BNB", "BNB", ["binancecoin"]),
+        ("XRP", "XRP", ["ripple"]),
+        ("ADA", "Cardano", ["cardano"]),
+        ("DOGE", "Dogecoin", ["dogecoin"]),
+        ("AVAX", "Avalanche", ["avalanche"]),
+        ("LINK", "Chainlink", ["chainlink"]),
+        ("DOT", "Polkadot", ["polkadot"]),
+        ("LTC", "Litecoin", ["litecoin"]),
+        ("BCH", "Bitcoin Cash", ["bitcoincash"]),
+        ("SHIB", "Shiba Inu", ["shibainu"]),
+    ]
+
+    static let cryptoCodes = Set(crypto.map(\.code))
+
     private static let contested: [String: [String]] = [
         "USD": ["dollar", "dollars"],  // 22 claimants
         "CHF": ["franc", "francs"],  // 10
@@ -126,14 +210,22 @@ enum CalcCurrency {
     static let byName: [String: CurrencyDef] = {
         var defs: [String: CurrencyDef] = [:]
         var table: [String: CurrencyDef] = [:]
-        defs.reserveCapacity(CurrencyData.all.count)
-        table.reserveCapacity(CurrencyData.all.count + CurrencyData.aliases.count)
+        defs.reserveCapacity(CurrencyData.all.count + crypto.count)
+        table.reserveCapacity(CurrencyData.all.count + CurrencyData.aliases.count + crypto.count * 2)
         for entry in CurrencyData.all {
             let def = CurrencyDef(code: entry.code, name: entry.name)
             defs[entry.code] = def
             table[entry.code.lowercased()] = def
         }
         for (word, code) in CurrencyData.aliases { table[word] = defs[code] }
+        // Crypto ticker codes win over fiat nouns when they collide (`SOL` vs Peruvian "sol").
+        // Fiat remains available by ISO code (`PEN`) and its other generated names.
+        for asset in crypto {
+            let def = CurrencyDef(code: asset.code, name: asset.name)
+            defs[asset.code] = def
+            table[asset.code.lowercased()] = def
+            for alias in asset.aliases { table[alias] = def }
+        }
         for (code, words) in contested {
             guard let def = defs[code] else { continue }
             for word in words { table[word] = def }

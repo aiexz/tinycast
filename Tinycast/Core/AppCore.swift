@@ -423,12 +423,27 @@ final class AppCore: ObservableObject {
         }
     }
 
-    /// Enter on the inline calculator card: copy the answer, remember the calculation, dismiss.
+    /// ↵ on the inline calculator card: copy the formatted answer (`display`), remember the calculation, dismiss.
     func copyCalculatorResult(_ result: CalcResult) {
+        copyCalc(result) { display, _ in display }
+    }
+
+    /// ⌘↵ on the inline calculator card: copy the unformatted answer (`copyText`), remember, dismiss.
+    func copyCalculatorResultUnformatted(_ result: CalcResult) {
+        copyCalc(result) { _, copyText in copyText }
+    }
+
+    /// ⌘⇧↵ on the inline calculator card: copy the question and the formatted answer together, remember, dismiss.
+    func copyCalculatorResultWithExpression(_ result: CalcResult) {
+        copyCalc(result) { display, _ in "\(result.expression)\n\(display)" }
+    }
+
+    /// Shared record + dismiss + copy path for the calculator card's three copy shortcuts — history always records the formatted `display` so the stored entry is identical regardless of which answer form was copied.
+    private func copyCalc(_ result: CalcResult, text: (_ display: String, _ copyText: String) -> String) {
         guard case .value(let display, let copyText) = result.payload else { return }
         calcHistory.record(expression: result.expression, result: display)
         hidePalette(restoreFocus: false)
-        Paster.copyPlainText(copyText)
+        Paster.copyPlainText(text(display, copyText))
     }
 
     /// Enter on a Calculator History row: re-copy the stored answer (no re-record).

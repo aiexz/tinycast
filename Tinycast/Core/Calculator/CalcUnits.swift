@@ -107,6 +107,87 @@ enum CalcUnits {
         guard output.isFinite else { return nil }
         return BareConversion(input: input, from: from, to: to, output: output, compound: mapping.compound)
     }
+    /// Design PPI conversion: `2 inches in px at 72 ppi` (physical length ↔ pixels) and its reverse
+    /// `144 px to in at 72 ppi`. The pixel side is the ident `px`; `ppi`/`at` are structural tokens, not
+    /// units in `byName`, so generic `parseConversion` never matches this shape (its last token would be
+    /// `ppi`, which isn't a known unit). Pixels = physicalInches × ppi, where physicalInches comes from
+    /// the source length unit's factor relative to the inch (0.0254 m). Malformed or nonpositive PPI → nil,
+    /// so the query falls through to a plain app search, never an error card.
+    struct PPIConversion: Equatable {
+        let input: Double           // the value on the physical side
+        let physicalUnit: UnitDef   // the real length unit (Inches, Centimeters, …)
+        let ppi: Double
+        let physicalToPixels: Bool  // true: length→px; false: px→length
+        let output: Double          // the computed pixel count (length→px) or length value (px→length)
+    }
+
+    static let pixelSymbol = "px"
+
+    /// Detects `<expr> <lengthUnit> (to|in|->) px at <ppi> ppi` or `<expr> px (to|in|->) <lengthUnit> at <ppi> ppi`.
+    /// `at` and the trailing `ppi` are required; the PPI value must be a positive finite number. The value
+    /// side defaults to 1 when empty, matching `parseConversion`.
+    static func parsePPIConversion(_ tokens: [CalcToken]) -> PPIConversion? {
+        guard tokens.count >= 6,
+            case .ident(let tail) = tokens[tokens.count - 1], tail == "ppi",
+            case .ident(let atKw) = tokens[tokens.count - 3], atKw == "at"
+        else { return nil }
+
+        // PPI is a single number between `at` and `ppi`; reject expressions there so `at 7 dpi` etc. fall through.
+        guard case .number(let ppi) = tokens[tokens.count - 2], ppi.isFinite, ppi > 0 else { return nil }
+
+        // The conversion clause is everything before `at`: `<…> <from> <conn> <to>`.
+        let clause = Array(tokens[0..<(tokens.count - 3)])
+        guard clause.count >= 3, isConnector(clause[clause.count - 2]),
+            case .ident(let targetName) = clause[clause.count - 1],
+            case .ident(let sourceName) = clause[clause.count - 3]
+        else { return nil }
+
+        // Exactly one side is `px`; the other is a real length unit. The connector sits at clause[n-2],
+        // source at clause[n-3], target at clause[n-1]; the value is the prefix before the source unit.
+        let targetToPx: Bool
+        let physicalUnit: UnitDef
+
+        if targetName == "px", let unit = byName[sourceName], unit.category == .length {
+            targetToPx = true
+            physicalUnit = unit
+        } else if sourceName == "px", let unit = byName[targetName], unit.category == .length {
+            targetToPx = false
+            physicalUnit = unit
+        } else {
+            return nil
+        }
+
+        // Value side is the prefix before the source unit (clause[n-3]); defaults to 1 when empty,
+        // matching parseConversion. In the px→length layout the source unit is `px`, so the value is
+        // the pixel count; in the length→px layout it's the physical length. We always consume the value
+        // off the left side and compute the physical-inches quantity from it in the right units below.
+        let valueTokens = Array(clause[0..<(clause.count - 3)])
+        let sourceValue: Double
+        if valueTokens.isEmpty {
+            sourceValue = 1
+        } else if let v = CalcParser.evaluate(valueTokens) {
+            sourceValue = v
+        } else {
+            return nil
+        }
+
+        let inchesPerMeter = 0.0254
+        let physicalInches: Double
+
+        if targetToPx {
+            // value is a length in physicalUnit; inches = value × factor / 0.0254.
+            physicalInches = sourceValue * physicalUnit.factor / inchesPerMeter
+            let pixels = physicalInches * ppi
+            guard pixels.isFinite else { return nil }
+            return PPIConversion(input: sourceValue, physicalUnit: physicalUnit, ppi: ppi, physicalToPixels: true, output: pixels)
+        } else {
+            // value is a pixel count; physical inches = px / ppi; length unit value = inches × 0.0254 / factor.
+            physicalInches = sourceValue / ppi
+            let output = physicalInches * inchesPerMeter / physicalUnit.factor
+            guard output.isFinite else { return nil }
+            return PPIConversion(input: sourceValue, physicalUnit: physicalUnit, ppi: ppi, physicalToPixels: false, output: output)
+        }
+    }
 
     static func isConnector(_ token: CalcToken) -> Bool {
         switch token {

@@ -16,6 +16,8 @@ final class CurrencyRateStore: ObservableObject {
     static let providerURL = URL(string: "https://frankfurter.dev")!
     private nonisolated static let endpoint = URL(
         string: "https://api.frankfurter.dev/v2/rates?base=USD")!
+    private nonisolated static let cryptoEndpoint = URL(
+        string: "https://api.coinbase.com/v2/exchange-rates?currency=USD")!
     /// Daily. The feed republishes about once a day, so asking more often just costs requests without
     /// getting newer numbers — and the age is measured from the persisted snapshot, so relaunching
     /// Tinycast repeatedly doesn't re-fetch.
@@ -127,24 +129,43 @@ final class CurrencyRateStore: ObservableObject {
 
     /// Off-main by way of `URLSession`'s async API; the decoded table is a plain value, so nothing but `CurrencyRates` crosses back.
     private nonisolated static func fetch() async throws -> CurrencyRates {
-        let request = URLRequest(url: endpoint, timeoutInterval: 20)
-        let (data, response) = try await session.data(for: request)
+        async let fiatTask = session.data(for: URLRequest(url: endpoint, timeoutInterval: 20))
+        async let cryptoTask = session.data(for: URLRequest(url: cryptoEndpoint, timeoutInterval: 20))
+        
+        let (data, response) = try await fiatTask
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
             throw URLError(.badServerResponse)
         }
 
-        // Frankfurter v2 answers with one flat row per pair rather than a keyed table.
         let rows = try JSONDecoder().decode([RateRow].self, from: data)
         guard let base = rows.first?.base else { throw URLError(.cannotParseResponse) }
         var rates: [String: Double] = [:]
-        rates.reserveCapacity(rows.count + 1)
+        rates.reserveCapacity(rows.count + CalcCurrency.cryptoCodes.count + 1)
         for row in rows where row.rate > 0 && row.rate.isFinite && row.base == base {
             rates[row.quote] = row.rate
         }
         guard !rates.isEmpty else { throw URLError(.cannotParseResponse) }
         rates[base] = 1
+        
+        if let (cData, cRes) = try? await cryptoTask,
+            let cHttp = cRes as? HTTPURLResponse, cHttp.statusCode == 200,
+            let json = try? JSONDecoder().decode(CoinbaseResponse.self, from: cData)
+        {
+            for code in CalcCurrency.cryptoCodes {
+                if let text = json.data.rates[code], let rate = Double(text), rate > 0, rate.isFinite {
+                    rates[code] = rate
+                }
+            }
+        }
 
         return CurrencyRates(base: base, rates: rates, fetchedAt: Date())
+    }
+
+    private struct CoinbaseResponse: Decodable {
+        struct Payload: Decodable {
+            let rates: [String: String]
+        }
+        let data: Payload
     }
 
     private struct RateRow: Decodable {

@@ -16,7 +16,31 @@ enum CalcDateTime {
         let query = echo.lowercased()
         guard !query.isEmpty else { return nil }
 
-        // Cheap gate: our grammars always carry a connector, so app searches skip all the parsing.
+        // Newer non-arith grammars run before the hasArith gate so unspaced ISO / `in` phrases match. Each recognizer is fully self-validating and returns nil unless its whole shape is present, so unit/currency/search queries fall through to the tokenizer path untouched.
+
+        // `35 days ago` — <n> <unit> ago.
+        if let result = parseAgo(query, echo: echo, now: now, calendar: calendar) {
+            return result
+        }
+        // `monday in 3 weeks`, `time in 4 hours`, `workhours in 2023`, `55h in workdays` — ` in ` relative forms that aren't unit conversions; returns nil for a trailing ` in <place>` so the timezone branch wins.
+        if let result = parseRelative(query, echo: echo, now: now, calendar: calendar) {
+            return result
+        }
+        // ISO Zulu
+        if let result = parseISOZulu(query, echo: echo, now: now, calendar: calendar) {
+            return result
+        }
+        // `145 mins to timespan` — a duration flattened to a human timespan; `timespan` is not a unit, so the unit converter returns nil and we win here.
+        if let result = parseTimespan(query, echo: echo, now: now, calendar: calendar) {
+            return result
+        }
+
+        // TimezoneParity owns this slot: a `parseTimezone(query, echo:echo, now:now, calendar:calendar)` branch for ` in <place>` / `time diff` forms. Insert here — after parseRelative yields nil for place-suffixed queries.
+        if let result = parseTimezone(query, echo: echo, now: now, calendar: calendar) {
+            return result
+        }
+
+        // Cheap gate: the A–D grammars always carry a connector, so app searches skip all the parsing.
         let hasUntil =
             query.contains(" till ") || query.contains(" until ") || query.contains(" til ")
         let hasSince = query.contains(" since ")
@@ -164,6 +188,24 @@ enum CalcDateTime {
                 payload: .value(display: display, copyText: display))
         }
 
+        // C (bare number): a moment + a lone integer adds in the unit that matches the base — days for a date (`August 5 + 5`), hours for a clock time (`3:45pm + 5`). A real date/time phrase always carries a letter, so letter-free operands (`10 + 5`, `5/2 + 1`) defer to plain arithmetic.
+        if op == "+",
+            (left.contains(where: \.isLetter) || right.contains(where: \.isLetter)),
+            let count = Int(right)
+        {
+            let component: Calendar.Component = base.hasTime ? .hour : .day
+            guard
+                let result = calendar.date(byAdding: component, value: count, to: base.date)
+            else { return nil }
+            let hasTime = base.hasTime
+            let display = momentString(result, hasTime: hasTime, now: now, calendar: calendar)
+            let sourceBadge = momentString(
+                base.date, hasTime: base.hasTime, now: now, calendar: calendar)
+            return CalcResult(
+                expression: echo, sourceBadge: sourceBadge, targetBadge: "Result",
+                payload: .value(display: display, copyText: display))
+        }
+
         // D: moment − moment → a whole-day difference. A real date subtraction always names a month/weekday/keyword; two letter-free operands (`5/2 - 1/2`) are equally valid as arithmetic, so defer to the calculator rather than silently reading them as dates.
         guard op == "-",
             left.contains(where: \.isLetter) || right.contains(where: \.isLetter),
@@ -182,6 +224,153 @@ enum CalcDateTime {
             sourceBadge: dateString(base.date, now: now, calendar: calendar),
             targetBadge: dateString(other.date, now: now, calendar: calendar),
             payload: .value(display: "\(days) \(word)", copyText: "\(days) \(word)"))
+    }
+
+    // MARK: - New Duration & Relative queries
+
+    private static func parseAgo(_ query: String, echo: String, now: Date, calendar: Calendar) -> CalcResult? {
+        guard query.hasSuffix(" ago") else { return nil }
+        let phrase = String(query.dropLast(4)).trimmingCharacters(in: .whitespaces)
+        let atoms = atomize(phrase)
+        guard atoms.count == 2, let count = Int(atoms[0]), let unit = durationUnit(atoms[1]) else { return nil }
+
+        let base = unit.subDay ? now : calendar.startOfDay(for: now)
+        let component: Calendar.Component
+        let value: Int
+        switch unit.kind {
+        case .day: component = .day; value = count
+        case .week: component = .day; value = count * 7
+        case .subSecond:
+            if unit.seconds == 1 { component = .second; value = count }
+            else if unit.seconds == 60 { component = .minute; value = count }
+            else { component = .hour; value = count }
+        }
+        guard let result = calendar.date(byAdding: component, value: -value, to: base) else { return nil }
+        let display = momentString(result, hasTime: unit.subDay, now: now, calendar: calendar)
+        return absoluteMomentCard(echo: echo, display: display, sourceBadge: momentString(base, hasTime: unit.subDay, now: now, calendar: calendar))
+    }
+
+    private static func parseRelative(_ query: String, echo: String, now: Date, calendar: Calendar) -> CalcResult? {
+        // Exclude timezone queries: if there's a second ` in ` or ` in <place>`, return nil so TimezoneParity handles it.
+        let parts = query.components(separatedBy: " in ")
+        guard parts.count == 2 else { return nil }
+        
+        let left = parts[0].trimmingCharacters(in: .whitespaces)
+        let right = parts[1].trimmingCharacters(in: .whitespaces)
+        
+        if left == "workhours", let year = Int(right) {
+            return parseWorkhoursInYear(year: year, echo: echo, calendar: calendar)
+        }
+            if right == "workdays" {
+                return parseHoursInWorkdays(left, echo: echo)
+            }
+            if left == "time" {
+                return parseTimeInHours(right, echo: echo, now: now, calendar: calendar)
+            }
+            if let weekday = weekdayByName[left], let duration = parseDurationPhrase(right), !duration.subDay {
+                // e.g. "monday in 3 weeks"
+                guard let base = nextWeekday(weekday, offsetToFuture: true, past: false, now: now, calendar: calendar) else { return nil }
+                guard let result = calendar.date(byAdding: duration.component, value: duration.count, to: base.date) else { return nil }
+                let display = momentString(result, hasTime: false, now: now, calendar: calendar)
+                return absoluteMomentCard(echo: echo, display: display, sourceBadge: momentString(base.date, hasTime: false, now: now, calendar: calendar))
+            }
+        return nil
+    }
+
+    private static func parseTimespan(_ query: String, echo: String, now: Date, calendar: Calendar) -> CalcResult? {
+        guard query.hasSuffix(" to timespan") else { return nil }
+        let phrase = String(query.dropLast(12)).trimmingCharacters(in: .whitespaces)
+        let atoms = atomize(phrase)
+        guard atoms.count == 2, let count = Double(atoms[0]), let unit = durationUnit(atoms[1]) else { return nil }
+        
+        let totalSeconds = count * unit.seconds
+        let hours = Int(totalSeconds / 3600)
+        let minutes = Int((totalSeconds.truncatingRemainder(dividingBy: 3600)) / 60)
+        
+        var display = ""
+        if hours > 0 { display += "\(hours)h " }
+        if minutes > 0 || hours == 0 { display += "\(minutes)m" }
+        display = display.trimmingCharacters(in: .whitespaces)
+        
+        return CalcResult(
+            expression: echo,
+            sourceBadge: "Duration",
+            targetBadge: "Timespan",
+            payload: .value(display: display, copyText: display))
+    }
+
+    private static func parseTimeInHours(_ phrase: String, echo: String, now: Date, calendar: Calendar) -> CalcResult? {
+        let atoms = atomize(phrase)
+        guard atoms.count == 2, let count = Int(atoms[0]), let unit = durationUnit(atoms[1]), unit.subDay else { return nil }
+        let component: Calendar.Component = (unit.seconds == 3600) ? .hour : ((unit.seconds == 60) ? .minute : .second)
+        guard let result = calendar.date(byAdding: component, value: count, to: now) else { return nil }
+        let display = momentString(result, hasTime: true, now: now, calendar: calendar)
+        return absoluteMomentCard(echo: echo, display: display, sourceBadge: "Now")
+    }
+
+    private static func parseWorkhoursInYear(year: Int, echo: String, calendar: Calendar) -> CalcResult? {
+        guard year > 1900 && year < 2100 else { return nil }
+        guard let start = makeDate(year, 1, 1, calendar), let end = makeDate(year + 1, 1, 1, calendar) else { return nil }
+        var weekdays = 0
+        var d = start
+        while d < end {
+            let w = calendar.component(.weekday, from: d)
+            if w >= 2 && w <= 6 { weekdays += 1 }
+            d = calendar.date(byAdding: .day, value: 1, to: d)!
+        }
+        let hours = weekdays * 8
+        let text = "\(CalcFormatter.grouped(String(hours))) hours"
+        return CalcResult(
+            expression: echo,
+            sourceBadge: String(year),
+            targetBadge: "Work Hours",
+            payload: .value(display: text, copyText: text))
+    }
+
+    private static func parseHoursInWorkdays(_ phrase: String, echo: String) -> CalcResult? {
+        let atoms = atomize(phrase)
+        guard atoms.count == 2, let count = Double(atoms[0]), let unit = durationUnit(atoms[1]), unit.seconds == 3600 else { return nil }
+        let days = count / 8.0
+        let text = "\(CalcFormatter.display(days)) \(days == 1.0 ? "workday" : "workdays")"
+        return CalcResult(
+            expression: echo,
+            sourceBadge: "\(CalcFormatter.display(count)) \(unit.plural.capitalized)",
+            targetBadge: "Workdays",
+            payload: .value(display: text, copyText: text))
+    }
+
+    private static func parseISOZulu(_ query: String, echo: String, now: Date, calendar: Calendar) -> CalcResult? {
+        // Naive split to verify strict ISO Zulu shape, since 8601 formatting is unavailable in core Foundation DateFormatter without iOS 10 fallback gymnastics.
+        let parts = query.components(separatedBy: "t")
+        guard parts.count == 2, parts[1].hasSuffix("z") else { return nil }
+        let datePart = parts[0]
+        let timePart = String(parts[1].dropLast())
+        let dateAtoms = datePart.split(separator: "-").map(String.init)
+        let timeAtoms = timePart.split(separator: ":").map(String.init)
+        guard dateAtoms.count == 3, timeAtoms.count >= 2,
+              let year = Int(dateAtoms[0]), let month = Int(dateAtoms[1]), let day = Int(dateAtoms[2]),
+              let hour = Int(timeAtoms[0]), let minute = Int(timeAtoms[1])
+        else { return nil }
+        let second = timeAtoms.count == 3 ? (Int(timeAtoms[2]) ?? 0) : 0
+        
+        var comps = DateComponents()
+        comps.year = year; comps.month = month; comps.day = day
+        comps.hour = hour; comps.minute = minute; comps.second = second
+        // Use UTC calendar to parse the Zulu timestamp faithfully, then display it in the injected calendar's timezone
+        var utcCal = Calendar(identifier: .gregorian)
+        utcCal.timeZone = TimeZone(identifier: "UTC")!
+        guard let utcDate = utcCal.date(from: comps) else { return nil }
+        
+        let display = momentString(utcDate, hasTime: true, now: now, calendar: calendar)
+        return absoluteMomentCard(echo: echo, display: display, sourceBadge: "ISO 8601")
+    }
+
+    private static func absoluteMomentCard(echo: String, display: String, sourceBadge: String) -> CalcResult {
+        CalcResult(
+            expression: echo,
+            sourceBadge: sourceBadge,
+            targetBadge: "Result",
+            payload: .value(display: display, copyText: display))
     }
 
     // MARK: - Moment parsing
@@ -516,4 +705,130 @@ enum CalcDateTime {
         "wednesday": 4, "wed": 4, "thursday": 5, "thu": 5, "thurs": 5, "friday": 6, "fri": 6,
         "saturday": 7, "sat": 7,
     ]
+    // MARK: - Timezone queries
+
+    private static func parseTimezone(_ query: String, echo: String, now: Date, calendar: Calendar) -> CalcResult? {
+        let q = query.lowercased()
+        
+        // 1. time diff <place> OR diff <place>
+        if q.hasPrefix("time diff ") || q.hasPrefix("diff ") {
+            let placeStr = q.hasPrefix("diff ") ? String(q.dropFirst(5)) : String(q.dropFirst(10))
+            if let tz = resolveCityToIANA(placeStr) {
+                let diffSeconds = tz.secondsFromGMT(for: now) - calendar.timeZone.secondsFromGMT(for: now)
+                let diffHours = Double(diffSeconds) / 3600.0
+                let sign = diffHours >= 0 ? "+" : ""
+                let display = "\(sign)\(CalcFormatter.display(diffHours)) hours"
+                return CalcResult(
+                    expression: echo,
+                    sourceBadge: tzCityName(calendar.timeZone),
+                    targetBadge: tzCityName(tz),
+                    payload: .value(display: display, copyText: display)
+                )
+            }
+        }
+        
+        // 2. <time> in <place> OR time in <place> OR time in <delay> in <place>
+        if let lastIn = q.range(of: " in ", options: .backwards) {
+            let left = String(q[..<lastIn.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let placeStr = String(q[lastIn.upperBound...]).trimmingCharacters(in: .whitespaces)
+            
+            if let targetTz = resolveCityToIANA(placeStr) {
+                var targetCalendar = calendar
+                targetCalendar.timeZone = targetTz
+                
+                // A) "time in <place>"
+                if left == "time" {
+                    let display = tzTimeString(now, calendar: targetCalendar)
+                    return CalcResult(
+                        expression: echo,
+                        sourceBadge: tzCityName(calendar.timeZone),
+                        targetBadge: tzCityName(targetTz),
+                        payload: .value(display: display, copyText: display)
+                    )
+                }
+                
+                // B) "time in <delay> in <place>"
+                if left.hasPrefix("time in ") {
+                    let delayStr = String(left.dropFirst(8))
+                    if let duration = parseDurationPhrase(delayStr),
+                       let targetDate = calendar.date(byAdding: duration.component, value: duration.count, to: now) {
+                        let display = tzTimeString(targetDate, calendar: targetCalendar)
+                        return CalcResult(
+                            expression: echo,
+                            sourceBadge: tzCityName(calendar.timeZone),
+                            targetBadge: tzCityName(targetTz),
+                            payload: .value(display: display, copyText: display)
+                        )
+                    }
+                }
+                
+                // C) "<time> <sourceTz> in <targetTz>"
+                let leftWords = left.split(separator: " ").map(String.init)
+                if leftWords.count >= 2, let sourceTz = resolveCityToIANA(leftWords.last!) {
+                    let timePhrase = leftWords.dropLast().joined(separator: " ")
+                    var sourceCalendar = calendar
+                    sourceCalendar.timeZone = sourceTz
+                    
+                    if let moment = parseMoment(timePhrase, now: now, calendar: sourceCalendar) {
+                        let display = tzTimeString(moment.date, calendar: targetCalendar)
+                        return CalcResult(
+                            expression: echo,
+                            sourceBadge: tzCityName(sourceTz),
+                            targetBadge: tzCityName(targetTz),
+                            payload: .value(display: display, copyText: display)
+                        )
+                    }
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    private static let tzAliases: [String: String] = [
+        "ldn": "Europe/London",
+        "sf": "America/Los_Angeles",
+        "sanfrancisco": "America/Los_Angeles",
+        "jfk": "America/New_York",
+        "dubai": "Asia/Dubai",
+    ]
+
+    private static func resolveCityToIANA(_ city: String) -> TimeZone? {
+        let normalized = city.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+            .replacingOccurrences(of: " ", with: "")
+        
+        if let alias = tzAliases[normalized] {
+            return TimeZone(identifier: alias)
+        }
+        
+        for identifier in TimeZone.knownTimeZoneIdentifiers {
+            let parts = identifier.split(separator: "/")
+            if let last = parts.last {
+                let cityPart = String(last).folding(options: [.diacriticInsensitive, .caseInsensitive], locale: nil)
+                    .replacingOccurrences(of: "_", with: "")
+                    .replacingOccurrences(of: " ", with: "")
+                if cityPart == normalized {
+                    return TimeZone(identifier: identifier)
+                }
+            }
+        }
+        return nil
+    }
+    
+    private static func tzCityName(_ tz: TimeZone) -> String {
+        if tz.secondsFromGMT() == 0, !tz.identifier.contains("/") { return "UTC" }
+        if let last = tz.identifier.split(separator: "/").last {
+            return String(last).replacingOccurrences(of: "_", with: " ")
+        }
+        return tz.identifier
+    }
+    
+    private static func tzTimeString(_ date: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.timeZone = calendar.timeZone
+        formatter.locale = calendar.locale ?? Locale(identifier: "en_US")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
 }

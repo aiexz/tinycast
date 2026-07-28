@@ -133,6 +133,11 @@ enum CalcParser {
         "sqrt": { sqrt($0) }, "log": { log10($0) }, "ln": { log($0) }, "sin": { sin($0) },
         "cos": { cos($0) }, "tan": { tan($0) }, "abs": { abs($0) }, "floor": { floor($0) },
         "ceil": { ceil($0) }, "round": { $0.rounded() },
+        // Reciprocals of the primary trig functions — `cot(45deg)` = 1/tan, `csc` = 1/sin, `sec` = 1/cos.
+        "cot": { 1 / tan($0) }, "csc": { 1 / sin($0) }, "sec": { 1 / cos($0) },
+        "asin": { asin($0) }, "acos": { acos($0) }, "atan": { atan($0) },
+        "sinh": { sinh($0) }, "cosh": { cosh($0) }, "tanh": { tanh($0) },
+        "asinh": { asinh($0) }, "acosh": { acosh($0) }, "atanh": { atanh($0) },
     ]
 
     fileprivate static let constants: [String: Double] = ["pi": .pi, "π": .pi, "e": M_E]
@@ -175,6 +180,7 @@ private struct Parser {
         case .op(let op) where op == "*" || op == "/": return (op, 20, 21)
         case .ident("of"): return ("*", 20, 21)
         case .op("^"): return ("^", 30, 30)  // right-associative: 2^3^2 = 512
+        case .ident("power"): return ("^", 30, 30)  // `2 power 10` == 2^10, right-associative like `^`
         default: return nil
         }
     }

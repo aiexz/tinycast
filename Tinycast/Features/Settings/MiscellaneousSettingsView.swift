@@ -106,7 +106,7 @@ private struct CurrencyConsentSheet: View {
             }
 
             Text(
-                "Tinycast downloads exchange rates from \(CurrencyRateStore.provider) once a day and "
+                "Tinycast downloads exchange rates from \(CurrencyRateStore.provider) and Coinbase once a day and "
                 + "keeps a copy on your Mac. No account, no identifiers, nothing you type. "
                 + "Turning it off deletes the cached rates."
             )
@@ -115,12 +115,21 @@ private struct CurrencyConsentSheet: View {
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: Theme.Spacing.lg) {
-                Link(destination: CurrencyRateStore.providerURL) {
-                    HStack(spacing: Theme.Spacing.xs) {
-                        Text(CurrencyRateStore.providerURL.host() ?? "Provider")
-                        Image(systemName: "arrow.up.right.square")
+                HStack(spacing: Theme.Spacing.md) {
+                    Link(destination: CurrencyRateStore.providerURL) {
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text(CurrencyRateStore.providerURL.host() ?? "Provider")
+                            Image(systemName: "arrow.up.right.square")
+                        }
+                        .font(.callout)
                     }
-                    .font(.callout)
+                    Link(destination: URL(string: "https://coinbase.com")!) {
+                        HStack(spacing: Theme.Spacing.xs) {
+                            Text("coinbase.com")
+                            Image(systemName: "arrow.up.right.square")
+                        }
+                        .font(.callout)
+                    }
                 }
                 Spacer()
                 Button("Not Now", action: onCancel)

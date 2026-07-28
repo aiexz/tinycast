@@ -109,7 +109,7 @@ private struct CalcColumn: View {
     }
 }
 
-/// Actions menu content for the calculator card — only answers can be copied, so an error card gets no menu (the caller passes `calc` only for value payloads).
+/// Actions menu content for the calculator card — the three copy shortcuts the manual advertises (↵ / ⌘↵ / ⌘⇧↵); only value payloads can be copied, so an error card gets no menu (the caller passes `calc` only for value payloads).
 @MainActor
 enum CalcActionsMenu {
     static func content(result: CalcResult, core: AppCore) -> PopoverMenuContent {
@@ -118,7 +118,13 @@ enum CalcActionsMenu {
             items: [
                 PopoverMenuItem(title: "Copy Answer", systemImage: "doc.on.doc", shortcut: "↵") {
                     core.copyCalculatorResult(result)
-                }
+                },
+                PopoverMenuItem(title: "Copy Unformatted Answer", systemImage: "number", shortcut: "⌘↵") {
+                    core.copyCalculatorResultUnformatted(result)
+                },
+                PopoverMenuItem(title: "Copy Question and Answer", systemImage: "text.alignleft", shortcut: "⌘⇧↵") {
+                    core.copyCalculatorResultWithExpression(result)
+                },
             ]
         )
     }

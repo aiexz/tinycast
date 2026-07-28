@@ -662,12 +662,25 @@ struct RootPaletteView: View {
 
     private func handleModifiedReturn(_ press: KeyPress) -> KeyPress.Result {
         let command = press.modifiers.contains(.command)
+        let shift = press.modifiers.contains(.shift)
         let option = press.modifiers.contains(.option)
         if menuOpen, !command, !option {
             activateMenuItem(menuSelection)
             return .handled
         }
         guard command || option else { return .ignored }
+        // The selected live calculator card takes precedence over app/history row routing: a single
+        // actionable calc card at flat index 0 carries the manual's three copy shortcuts (↵, handled
+        // by `activateSelection`; ⌘↵ unformatted; ⌘⇧↵ question + answer). Plain ↵ reaches this path
+        // only via the field's onSubmit, never through handleModifiedReturn, so only ⌘ variants land here.
+        if command, let calc = calcActionableResult {
+            if shift {
+                core.copyCalculatorResultWithExpression(calc)
+            } else {
+                core.copyCalculatorResultUnformatted(calc)
+            }
+            return .handled
+        }
         switch vm.mode {
         case .emoji:
             guard emojiResults.indices.contains(selection) else { return .ignored }

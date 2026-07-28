@@ -48,7 +48,8 @@ enum CalcEngine {
         // Date/time first: `hrs till july` carries no digit, so it must run before the numeric reject below.
         if let dateTime = CalcDateTime.evaluate(query, now: now, calendar: calendar) { return dateTime }
 
-        guard let tokens = CalcTokenizer.tokenize(query), !tokens.isEmpty else { return nil }
+        guard let tokens0 = CalcTokenizer.tokenize(query), !tokens0.isEmpty else { return nil }
+        let tokens = normalizePhrases(tokens0)
 
         // A lone literal or constant is more likely an app search than a calculation, so no card — except a radix literal ("0xff"), where echoing the decimal is useful.
         if tokens.count == 1 {
@@ -84,20 +85,41 @@ enum CalcEngine {
                     ))
             }
         }
+        // Design PPI conversion: `2 inches in px at 72 ppi` and reverse `144 px to in at 72 ppi`. The shape
+        // (trailing `at <n> ppi`) can't be matched by the generic converter above, so it gets its own arm.
+        if let ppi = CalcUnits.parsePPIConversion(tokens) {
+            if ppi.physicalToPixels {
+                return CalcResult(
+                    expression: "\(CalcFormatter.display(ppi.input)) \(ppi.physicalUnit.symbol)",
+                    sourceBadge: ppi.physicalUnit.name,
+                    targetBadge: "Pixels",
+                    payload: .value(
+                        display: "\(CalcFormatter.display(ppi.output)) \(CalcUnits.pixelSymbol)",
+                        copyText: "\(CalcFormatter.copyText(ppi.output)) \(CalcUnits.pixelSymbol)"))
+            }
+            return CalcResult(
+                expression: "\(CalcFormatter.display(ppi.input)) \(CalcUnits.pixelSymbol)",
+                sourceBadge: "Pixels",
+                targetBadge: ppi.physicalUnit.name,
+                payload: .value(
+                    display: "\(CalcFormatter.display(ppi.output)) \(ppi.physicalUnit.symbol)",
+                    copyText: "\(CalcFormatter.copyText(ppi.output)) \(ppi.physicalUnit.symbol)"))
+        }
 
         // Currency runs after units so an all-unit query keeps winning: `10 pounds to kg` is weight,
         // `10 pounds to euros` is money. Returns nil outright when the user hasn't consented.
         if let conversion = CalcCurrency.parseConversion(tokens, source: currency) {
             switch conversion {
-            case .value(let input, let from, let to, let output):
+            case .value(let input, let from, let to, let output, let rateUnit):
                 let amount = CalcFormatter.currency(output)
+                let suffix = rateUnit != nil ? "/\(rateUnit!)" : ""
                 return CalcResult(
-                    expression: "\(CalcFormatter.display(input)) \(from.code)",
+                    expression: "\(CalcFormatter.display(input)) \(from.code)\(suffix)",
                     sourceBadge: from.name,
                     targetBadge: to.name,
                     payload: .value(
-                        display: "\(CalcFormatter.grouped(amount)) \(to.code)",
-                        copyText: "\(amount) \(to.code)"))
+                        display: "\(CalcFormatter.grouped(amount)) \(to.code)\(suffix)",
+                        copyText: "\(amount) \(to.code)\(suffix)"))
             case .mismatch(let from, let to):
                 return CalcResult(
                     expression: query,
@@ -206,6 +228,26 @@ enum CalcEngine {
         }
     }
 
+    /// Token-level normalization of documented natural-language math phrases into the symbolic grammar the evaluator already speaks, evaluated at the engine/parser boundary (no new evaluators).
+    private static func normalizePhrases(_ tokens: [CalcToken]) -> [CalcToken] {
+        var out: [CalcToken] = []
+        out.reserveCapacity(tokens.count)
+        var i = 0
+        while i < tokens.count {
+            // `square root of <x>` → `sqrt <x>`: drop the connector `of` and fold the two-word function name.
+            if i + 2 < tokens.count,
+                tokens[i] == .ident("square"), tokens[i + 1] == .ident("root"),
+                tokens[i + 2] == .ident("of")
+            {
+                out.append(.ident("sqrt"))
+                i += 3
+                continue
+            }
+            out.append(tokens[i])
+            i += 1
+        }
+        return out
+    }
     /// Light cleanup of the typed expression for the card: collapse whitespace and use pretty operator glyphs, otherwise keep what the user wrote.
     private static func prettyExpression(_ query: String) -> String {
         query.split(whereSeparator: \.isWhitespace).joined(separator: " ")

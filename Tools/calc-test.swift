@@ -80,6 +80,43 @@ struct CalcTests {
         expectDisplay("8 bit to byte", "1 B")
         expectDisplay("2*5 km to mi", "6.213711922 mi")  // expression on the left side
 
+        // Design PPI conversion — physical length ↔ pixels with an explicit `at <n> ppi` suffix
+        expectDisplay("2 inches in px at 72 ppi", "144 px")
+        expectBadges("2 inches in px at 72 ppi", source: "Inches", target: "Pixels")
+        expectDisplay("1 cm in px at 72 ppi", "28.34645669 px")
+        expectDisplay("5 cm to px at 300 ppi", "590.5511811 px")
+        expectDisplay("10 mm in px at 96 ppi", "37.79527559 px")
+        expectExpression("2 inches in px at 72 ppi", "2 in")
+        // Reverse: pixels → physical length when PPI is supplied
+        expectDisplay("216 px to in at 72 ppi", "3 in")
+        expectBadges("216 px to in at 72 ppi", source: "Pixels", target: "Inches")
+        expectDisplay("144 px to cm at 72 ppi", "5.08 cm")
+        // Expression on the value side
+        expectDisplay("2*3 inches in px at 72 ppi", "432 px")
+        // Implied quantity of 1
+        expectDisplay("inch to px at 72 ppi", "72 px")
+        // Malformed / missing / nonpositive PPI falls through to no card (not an error)
+        expectNil("2 inches in px")          // missing `at … ppi`
+        expectNil("2 inches in px at 72")     // missing trailing `ppi`
+        expectNil("2 inches in px at ppi")     // missing PPI value
+        expectNil("2 inches in px at 0 ppi")   // nonpositive PPI
+        expectNil("2 inches in px at -72 ppi")
+        expectNil("2 kg in px at 72 ppi")        // non-length source → not a PPI query
+        // The duration targets are NOT stolen by the generic unit converters — checked at the parser
+        // level so this stays valid once the date slice turns the full query into a timespan/workday card.
+        if let t = CalcTokenizer.tokenize("145 mins to timespan"),
+            CalcUnits.parseConversion(t) != nil || CalcUnits.parseUnitPairConversion(t) != nil
+        {
+            fail("145 mins to timespan", expected: "unit parser nil", got: "matched")
+        } else { passes += 1 }
+        if let t = CalcTokenizer.tokenize("55h in workdays"),
+            CalcUnits.parseConversion(t) != nil
+                || CalcUnits.parseUnitPairConversion(t) != nil
+                || CalcUnits.parseBareConversion(t) != nil
+        {
+            fail("55h in workdays", expected: "unit parser nil", got: "matched")
+        } else { passes += 1 }
+
         // Number bases
         expectDisplay("255 to hex", "0xFF")
         expectDisplay("255 to binary", "0b11111111")
@@ -169,6 +206,37 @@ struct CalcTests {
         expectNilAt("july")
         expectNilAt("tomorrow")
 
+        // New relative date/duration grammars
+        expectDisplayAt("monday in 3 weeks", "Monday, 17 August")
+        expectBadgesAt("monday in 3 weeks", source: "Monday, 27 July", target: "Result")
+        
+        expectDisplayAt("35 days ago", "Friday, 19 June")
+        expectBadgesAt("35 days ago", source: "Friday, 24 July", target: "Result")
+        
+        expectDisplayAt("days until 31 Mar", "250 days")
+        expectBadgesAt("days until 31 Mar", source: "Friday, 24 July", target: "Wednesday, 31 March, 2027")
+        
+        expectDisplayAt("August 5 + 5", "Monday, 10 August")
+        expectBadgesAt("August 5 + 5", source: "Wednesday, 5 August", target: "Result")
+        
+        expectDisplayAt("3:45pm + 5", "Friday, 24 July at 8:45 PM")
+        expectBadgesAt("3:45pm + 5", source: "Friday, 24 July at 3:45 PM", target: "Result")
+        
+        expectDisplayAt("time in 4 hours", "Friday, 24 July at 4:18 AM")
+        expectBadgesAt("time in 4 hours", source: "Now", target: "Result")
+        
+        expectDisplayAt("145 mins to timespan", "2h 25m")
+        expectBadgesAt("145 mins to timespan", source: "Duration", target: "Timespan")
+        
+        expectDisplayAt("55h in workdays", "6.875 workdays")
+        expectBadgesAt("55h in workdays", source: "55 Hours", target: "Workdays")
+        
+        expectDisplayAt("workhours in 2023", "2,080 hours")
+        expectBadgesAt("workhours in 2023", source: "2023", target: "Work Hours")
+        
+        expectDisplayAt("2024-03-15T14:30:00Z", "Friday, 15 March, 2024 at 2:30 PM")
+        expectBadgesAt("2024-03-15T14:30:00Z", source: "ISO 8601", target: "Result")
+
         // Angle units (deg is a real unit now, not just a trig postfix)
         expectDisplay("1 deg", "0.01745329252 rad")
         expectExpression("1 deg", "1 deg")
@@ -200,6 +268,33 @@ struct CalcTests {
         // Percentage phrasings
         expectDisplay("20% off 500", "400")
         expectDisplay("50 as % of 200", "25%")
+
+        // Natural-language math grammar (manual: "square root of 625" / "2 power 10")
+        expectDisplay("square root of 625", "25")
+        expectDisplay("square root of 2", "1.414213562")
+        expectDisplay("2 power 10", "1,024")
+        expectDisplay("3 power 4", "81")
+        expectDisplay("2 power 3 power 2", "512")  // right-associative like `^`
+
+        // Advanced trig: cot/csc/sec + hyperbolic + inverse (incl. acos)
+        expectDisplay("cot(45deg)", "1")
+        expectDisplay("csc(30deg)", "2")
+        expectDisplay("sec(60deg)", "2")
+        expectDisplay("sinh(1)", "1.175201194")
+        expectDisplay("cosh(0)", "1")
+        expectDisplay("tanh(0)", "0")
+        expectDisplay("asin(1)", "1.570796327")
+        expectDisplay("acos(0.5)", "1.047197551")
+        expectDisplay("atan(1)", "0.7853981634")
+        expectDisplay("asinh(0)", "0")
+
+        // Finance: tip, ratio, compound growth
+        expectDisplay("15% tip on 42", "48.3")
+        expectDisplay("ratio of 3 to 5", "0.6")
+        expectDisplay("ratio of 1 to 4", "0.25")
+        expectDisplay("1000 invested at 7% after 3 years", "1,225.043")
+        expectDisplay("invested at 7% after 3 years", "1.225043")
+        expectDisplay("500 invested at 5% after 10 years", "814.4473134")
 
         // Badges on paths that previously had none
         expectBadges("255 to hex", source: "Decimal", target: "Hexadecimal")
@@ -312,6 +407,35 @@ struct CalcTests {
         expectDisplayWithoutConsent("255 to hex", "0xFF")
         expectDisplayWithoutConsent("20% off 500", "400")
 
+        // MARK: - Timezone queries
+        expectDisplayAt("time in tokyo", "09:18") // 00:18 UTC -> +9 = 09:18
+        expectBadgesAt("time in tokyo", source: "UTC", target: "Tokyo")
+        expectDisplayAt("5pm ldn in sf", "09:00") // 17:00 UTC+1 -> -7 = 09:00 (Note: London in July is BST (+1), SF is PDT (-7), wait, does test clock inject tz?)
+        expectBadgesAt("5pm ldn in sf", source: "London", target: "Los Angeles")
+        expectDisplayAt("time diff Paris", "+2 hours") // UTC to CEST (+2)
+        expectBadgesAt("time diff Paris", source: "UTC", target: "Paris")
+        expectDisplayAt("diff Paris", "+2 hours")
+        expectDisplayAt("time in 4 hours in San Francisco", "21:18") // 00:18 UTC + 4h = 04:18 UTC -> PDT (-7) = 21:18 previous day
+        expectDisplayAt("time in São Paulo", "21:18") // UTC-3
+        expectDisplayAt("time in JFK", "20:18") // UTC-4 EDT
+        expectDisplayAt("Time in Dubai", "04:18") // UTC+4
+
+        // MARK: - Currency Parity Cases (CurrencyCryptoParity)
+        expectDisplay("USD1K to eur", "920.00 EUR")
+        expectDisplay("10K in gbp", "7,900.00 GBP")
+        expectDisplay("$5K to eur", "4,600.00 EUR")
+        expectDisplay("usd eur", "0.92 EUR")
+        expectDisplay("usd rub", "80.00 RUB")
+        expectDisplay("sol gbp", "39.50 GBP")
+        expectDisplay("8 dollars/hour in gbp", "6.32 GBP/hour")
+        expectDisplay("5 btc in gbp", "250,000.00 GBP")
+        expectError("5 eth to gbp", "No exchange rate for ETH.")
+        expectDisplay("5 sol in gbp", "197.50 GBP")
+        expectDisplay("10 pol in eur", "18.40 EUR")
+        expectDisplay("2 ton in usd", "5.00 USD")
+        expectDisplay("1 solana to usd", "50.00 USD")
+        expectBadges("1 toncoin to usd", source: "Toncoin", target: "US Dollar")
+        expectError("1 doge to usd", "No exchange rate for DOGE.")
         print("\n\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
@@ -340,7 +464,8 @@ struct CalcTests {
         base: "USD",
         rates: [
             "USD": 1, "EUR": 0.92, "GBP": 0.79, "JPY": 157, "INR": 83.5, "CAD": 1.36,
-            "KRW": 1330, "IDR": 18053, "CHF": 0.81, "AED": 3.6725,
+            "KRW": 1330, "IDR": 18053, "CHF": 0.81, "AED": 3.6725, "RUB": 80,
+            "BTC": 0.0000158, "SOL": 0.02, "POL": 0.5, "TON": 0.4,
         ],
         fetchedAt: Date(timeIntervalSince1970: 1_785_000_000))
 
