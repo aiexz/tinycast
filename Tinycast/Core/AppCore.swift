@@ -15,6 +15,9 @@ enum PaletteMode: String, CaseIterable, Identifiable {
     case caffeinateFor
     case caffeinateUntil
     case caffeinateWhile
+    // Live camera feed rendered inside the palette (Tinycast/Features/Camera/CameraPreviewView);
+    // the preview ignores search input, so its placeholder is a harmless empty sentinel.
+    case cameraPreview
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -27,6 +30,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .caffeinateFor: return "Caffeinate for"
         case .caffeinateUntil: return "Caffeinate Until"
         case .caffeinateWhile: return "Caffeinate While"
+        case .cameraPreview: return "Camera Preview"
         }
     }
     var systemImage: String {
@@ -40,6 +44,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .caffeinateFor: return "timer"
         case .caffeinateUntil: return "clock.badge.checkmark"
         case .caffeinateWhile: return "macwindow"
+        case .cameraPreview: return "video"
         }
     }
     var placeholder: String {
@@ -53,6 +58,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .caffeinateFor: return "Keep awake for a duration, e.g. 5m, 2h…"
         case .caffeinateUntil: return "Keep awake until a time or date, e.g. 9am, 5pm, april 9…"
         case .caffeinateWhile: return "Pick an app to keep the Mac awake while it's running…"
+        case .cameraPreview: return ""
         }
     }
 }
@@ -423,6 +429,8 @@ final class AppCore: ObservableObject {
             showPalette(mode: .caffeinateUntil)
         case .caffeinateWhile:
             showPalette(mode: .caffeinateWhile)
+        case .cameraPreview:
+            showPalette(mode: .cameraPreview)
         case .quitAllApps:
             // Hide before confirming: the palette is a floating panel and would sit above the alert.
             hidePalette(restoreFocus: false)

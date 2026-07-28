@@ -28,6 +28,8 @@
 	<true/>
 	<key>NSCalendarsFullAccessUsageDescription</key>
 	<string>Tinycast uses your calendar to show upcoming events and let you join meetings.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Tinycast uses the camera for the live preview.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Tinycast</string>
 </dict>

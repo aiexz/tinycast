@@ -22,6 +22,7 @@
 		34E5FF0B3C9FD2FFE504D87A /* ClipboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52ADC36002F1A5B04D61B4D3 /* ClipboardView.swift */; };
 		36784C964DB27B94A62EEAA3 /* tinycast.icon in Resources */ = {isa = PBXBuildFile; fileRef = 6621A88681E993D49EEF07A3 /* tinycast.icon */; };
 		374235D358A127741447551E /* SettingsBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5043CD44B4B40C49BE79852A /* SettingsBackup.swift */; };
+		39D4C74DD0C9BC8D3D4C4B64 /* CameraPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 325C17C60CF25A877EB4A8B3 /* CameraPreviewView.swift */; };
 		3C9E773C72B82602E2727DA0 /* MicrophoneController.swift in Sources */ = {isa = PBXBuildFile; fileRef = A223ABE2E8E8E43AEA55F838 /* MicrophoneController.swift */; };
 		42828BD1C5E4E6E7AA1BF103 /* CalculatorHistoryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F793A92DD4DC73CF1D87F3FD /* CalculatorHistoryStore.swift */; };
 		441CF705AE1D03F6E236A61E /* ClipboardStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = BDC43CFF6777C11BB880F398 /* ClipboardStore.swift */; };
@@ -107,6 +108,7 @@
 		2B629EC3B716FEE881BB0075 /* TinycastApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TinycastApp.swift; sourceTree = "<group>"; };
 		2C3EB07C07902C53BFD3B08B /* KeyShortcut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyShortcut.swift; sourceTree = "<group>"; };
 		2FC323070A08CD17DFFB2F8A /* BackupSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupSettingsView.swift; sourceTree = "<group>"; };
+		325C17C60CF25A877EB4A8B3 /* CameraPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewView.swift; sourceTree = "<group>"; };
 		32A53295959552ED28D34960 /* Gunzip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gunzip.swift; sourceTree = "<group>"; };
 		33A13DB27EE627AC08051165 /* EdgeDissolve.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeDissolve.swift; sourceTree = "<group>"; };
 		3A64EF5A07D459753998F78C /* AppCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCore.swift; sourceTree = "<group>"; };
@@ -303,6 +305,7 @@
 				4667598F175BCBB55CA88BEE /* About */,
 				356F452DB0F8F9834817455B /* Calculator */,
 				AB3219F826C0EB84910B6AAD /* Calendar */,
+				A4EEB152B6277E473ED70808 /* Camera */,
 				005F026A8F7D5E209B1CE917 /* Clipboard */,
 				15CFCD6B1429C5F0944CBCC4 /* Emoji */,
 				7DE06EE636C14E50EE172D9E /* Launcher */,
@@ -313,6 +316,14 @@
 				0F50886DC766B9923C3875A5 /* RootPaletteView.swift */,
 			);
 			path = Features;
+			sourceTree = "<group>";
+		};
+		A4EEB152B6277E473ED70808 /* Camera */ = {
+			isa = PBXGroup;
+			children = (
+				325C17C60CF25A877EB4A8B3 /* CameraPreviewView.swift */,
+			);
+			path = Camera;
 			sourceTree = "<group>";
 		};
 		AB3219F826C0EB84910B6AAD /* Calendar */ = {
@@ -518,6 +529,7 @@
 				FE6A9C75F87C3495F413E66E /* CalculatorHistoryView.swift in Sources */,
 				DBCABE96660AD4AAE1F77AFC /* CalendarStore.swift in Sources */,
 				1DF3EED17184DD754E4DF7E0 /* CalendarView.swift in Sources */,
+				39D4C74DD0C9BC8D3D4C4B64 /* CameraPreviewView.swift in Sources */,
 				B1B3F5715BE7A092F0CEFA09 /* ClipboardManager.swift in Sources */,
 				1F39D145DBE2290532C93614 /* ClipboardSettingsView.swift in Sources */,
 				441CF705AE1D03F6E236A61E /* ClipboardStore.swift in Sources */,

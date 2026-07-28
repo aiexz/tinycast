@@ -89,6 +89,7 @@ struct RootPaletteView: View {
         case .emoji: return emojiResults.count
         case .calendar: return calendarResults.count
         case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil: return 1
+        case .cameraPreview: return 0
         case .caffeinateWhile: return SystemCommandActions.runningApps.count
         }
     }
@@ -164,7 +165,7 @@ struct RootPaletteView: View {
         case .calendar:
             guard let event = selectedCalendarEvent else { return nil }
             return CalendarActionsMenu.content(event: event, store: calendarStore)
-        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
             return nil
         }
     }
@@ -409,7 +410,7 @@ struct RootPaletteView: View {
                 deleteSelectedClip()
             case .calculatorHistory:
                 deleteSelectedHistoryEntry()
-            case .launcher, .emoji, .calendar, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
+            case .launcher, .emoji, .calendar, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
                 return .ignored
             }
             return .handled
@@ -615,6 +616,8 @@ struct RootPaletteView: View {
             }
         case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
             SystemCommandView(mode: vm.mode, query: vm.query, selection: selection)
+        case .cameraPreview:
+            CameraPreviewView()
         }
     }
 
@@ -673,6 +676,7 @@ struct RootPaletteView: View {
         case .calendar: return "Open in Calendar"
         case .setMicrophoneLevel: return "Set Level"
         case .caffeinateFor, .caffeinateUntil, .caffeinateWhile: return "Caffeinate"
+        case .cameraPreview: return ""
         case .launcher:
             if calcActionable { return "Copy Answer" }
             switch selectedApp?.kind {
@@ -746,7 +750,7 @@ struct RootPaletteView: View {
         case .calendar:
             guard command, let event = selectedCalendarEvent, event.meetingURL != nil else { return .ignored }
             calendarStore.join(event)
-        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
             return .ignored
         }
         return .handled
@@ -857,6 +861,8 @@ struct RootPaletteView: View {
             guard apps.indices.contains(selection) else { return }
             Task { await core.caffeinationController.caffeinateWhileApp(.bundleID(apps[selection].id)) }
             core.hidePalette(restoreFocus: false)
+        case .cameraPreview:
+            return
         }
     }
 }

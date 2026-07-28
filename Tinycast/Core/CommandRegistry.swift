@@ -27,6 +27,7 @@ enum CommandID: String, CaseIterable, Sendable {
     case caffeinateFor = "command:caffeinate-for"
     case caffeinateUntil = "command:caffeinate-until"
     case caffeinateWhile = "command:caffeinate-while"
+    case cameraPreview = "command:camera-preview"
 
     var name: String {
         switch self {
@@ -49,6 +50,7 @@ enum CommandID: String, CaseIterable, Sendable {
         case .caffeinateFor: return "Caffeinate for…"
         case .caffeinateUntil: return "Caffeinate Until"
         case .caffeinateWhile: return "Caffeinate While"
+        case .cameraPreview: return "Camera Preview"
         }
     }
 
@@ -72,6 +74,7 @@ enum CommandID: String, CaseIterable, Sendable {
         case .toggleCaffeination: return "circle.dotted"
         case .caffeinateFor: return "timer"
         case .caffeinateUntil: return "clock.badge.checkmark"
+        case .cameraPreview: return "video"
         case .caffeinateWhile: return "macwindow"
         }
     }
