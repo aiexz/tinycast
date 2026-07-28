@@ -12,6 +12,7 @@
 		14712478C37E6E8760CA47EC /* HyperKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6DC5A4706854493D23FD18A /* HyperKey.swift */; };
 		14A5A5ACD35A572EE906769F /* CalcEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B976C84AFE60E357A346224 /* CalcEngine.swift */; };
 		1D0C2F452B3801503B70EA9E /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F63A3610C275E4961D60C7E /* GeneralSettingsView.swift */; };
+		1DF3EED17184DD754E4DF7E0 /* CalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD15567CD8CA139334FB714E /* CalendarView.swift */; };
 		1F39D145DBE2290532C93614 /* ClipboardSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 849FF3D93960B75F341D867C /* ClipboardSettingsView.swift */; };
 		2085C9433B7534044E0A8A7D /* PermissionsSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C36D92A5018B9A7B33775DE /* PermissionsSettingsView.swift */; };
 		20C8E98F5BC0FDDB0F646F3D /* OverlayScroller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FF10C4F5E4F73503F58D03B /* OverlayScroller.swift */; };
@@ -75,6 +76,7 @@
 		DA2EBB18F026BD055E0270CD /* AppLauncher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A2EF9C70F8BC9571089D5EB /* AppLauncher.swift */; };
 		DA5BCA13045FF91B3FC8EB35 /* OnboardingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = B8A9B4E6E477C30372C85F86 /* OnboardingState.swift */; };
 		DB04CC2AFEDD69D0676CA1D1 /* CalculatorCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C64C87569634E26E1BE99A91 /* CalculatorCardView.swift */; };
+		DBCABE96660AD4AAE1F77AFC /* CalendarStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D68536B01E8516CE598BF98 /* CalendarStore.swift */; };
 		DCC36924E538C11136CEC060 /* LauncherView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BB7C545EFD9589A77AD7BE2 /* LauncherView.swift */; };
 		DEC660F280699E43AA028E8A /* HotKeyCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DB0D6E17E2B2D6F2CB47E0D /* HotKeyCenter.swift */; };
 		DFC432B6B36C4985E2234E25 /* SystemStatusItems.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF37C195C9083C2385E4C86E /* SystemStatusItems.swift */; };
@@ -123,6 +125,7 @@
 		596ADD747B4546B1E3340094 /* ShortcutRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShortcutRecorder.swift; sourceTree = "<group>"; };
 		5A2EF9C70F8BC9571089D5EB /* AppLauncher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLauncher.swift; sourceTree = "<group>"; };
 		5D57B0AE44D21035163BD422 /* CommandRegistry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandRegistry.swift; sourceTree = "<group>"; };
+		5D68536B01E8516CE598BF98 /* CalendarStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarStore.swift; sourceTree = "<group>"; };
 		5E08668A3C8418E2F0970300 /* CurrencyData.generated.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyData.generated.swift; sourceTree = "<group>"; };
 		6185011A02366B30B48B5B6C /* Paster.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Paster.swift; sourceTree = "<group>"; };
 		641A8B9F099ED1521F14D81E /* EmojiCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiCatalog.swift; sourceTree = "<group>"; };
@@ -137,8 +140,8 @@
 		825AC18CE5DAFBEDA0CF3209 /* VisibilityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VisibilityStore.swift; sourceTree = "<group>"; };
 		849FF3D93960B75F341D867C /* ClipboardSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardSettingsView.swift; sourceTree = "<group>"; };
 		88A65B4EC5AE7E22594BFC5E /* CalcPercent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalcPercent.swift; sourceTree = "<group>"; };
-		8F029A6F0E3E475896C5FA7A /* SystemCommandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCommandViews.swift; sourceTree = "<group>"; };
 		8E6CB5CD6C0477BAC9FE383F /* CurrencyRateStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrencyRateStore.swift; sourceTree = "<group>"; };
+		8F029A6F0E3E475896C5FA7A /* SystemCommandViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemCommandViews.swift; sourceTree = "<group>"; };
 		919AC64DE9C9DC3A973A0B4E /* HyperKeyTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HyperKeyTap.swift; sourceTree = "<group>"; };
 		93E9ACD504E016DFF6FE6C1B /* RightClick.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RightClick.swift; sourceTree = "<group>"; };
 		98B7211D27EDF764EC477A0F /* PopoverMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PopoverMenu.swift; sourceTree = "<group>"; };
@@ -156,6 +159,7 @@
 		B8A9B4E6E477C30372C85F86 /* OnboardingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingState.swift; sourceTree = "<group>"; };
 		BA7CE23482F7DF563A268806 /* AppIndex.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppIndex.swift; sourceTree = "<group>"; };
 		BB94F0767AE0A5855FB22BF6 /* EmojiGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmojiGridView.swift; sourceTree = "<group>"; };
+		BD15567CD8CA139334FB714E /* CalendarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarView.swift; sourceTree = "<group>"; };
 		BDC43CFF6777C11BB880F398 /* ClipboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardStore.swift; sourceTree = "<group>"; };
 		C45190564C9D9F1722E83943 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C64C87569634E26E1BE99A91 /* CalculatorCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalculatorCardView.swift; sourceTree = "<group>"; };
@@ -298,6 +302,7 @@
 			children = (
 				4667598F175BCBB55CA88BEE /* About */,
 				356F452DB0F8F9834817455B /* Calculator */,
+				AB3219F826C0EB84910B6AAD /* Calendar */,
 				005F026A8F7D5E209B1CE917 /* Clipboard */,
 				15CFCD6B1429C5F0944CBCC4 /* Emoji */,
 				7DE06EE636C14E50EE172D9E /* Launcher */,
@@ -308,6 +313,15 @@
 				0F50886DC766B9923C3875A5 /* RootPaletteView.swift */,
 			);
 			path = Features;
+			sourceTree = "<group>";
+		};
+		AB3219F826C0EB84910B6AAD /* Calendar */ = {
+			isa = PBXGroup;
+			children = (
+				5D68536B01E8516CE598BF98 /* CalendarStore.swift */,
+				BD15567CD8CA139334FB714E /* CalendarView.swift */,
+			);
+			path = Calendar;
 			sourceTree = "<group>";
 		};
 		BB6DB69437E85BCDB2530225 /* Tinycast */ = {
@@ -502,6 +516,8 @@
 				DB04CC2AFEDD69D0676CA1D1 /* CalculatorCardView.swift in Sources */,
 				42828BD1C5E4E6E7AA1BF103 /* CalculatorHistoryStore.swift in Sources */,
 				FE6A9C75F87C3495F413E66E /* CalculatorHistoryView.swift in Sources */,
+				DBCABE96660AD4AAE1F77AFC /* CalendarStore.swift in Sources */,
+				1DF3EED17184DD754E4DF7E0 /* CalendarView.swift in Sources */,
 				B1B3F5715BE7A092F0CEFA09 /* ClipboardManager.swift in Sources */,
 				1F39D145DBE2290532C93614 /* ClipboardSettingsView.swift in Sources */,
 				441CF705AE1D03F6E236A61E /* ClipboardStore.swift in Sources */,

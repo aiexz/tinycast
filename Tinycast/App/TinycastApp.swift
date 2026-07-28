@@ -15,6 +15,10 @@ struct TinycastApp: App {
         ) {
             Button("Open \(appName)") { AppCore.shared.showPalette(mode: .launcher) }
             Button("Clipboard History") { AppCore.shared.showClipboard() }
+            Button("My Schedule") {
+                AppCore.shared.showPalette(mode: .calendar)
+                Task { await AppCore.shared.calendarStore.requestAccessAndRefresh() }
+            }
             Divider()
             Button("Settings...") { AppCore.shared.showSettings() }
                 .keyboardShortcut(",")

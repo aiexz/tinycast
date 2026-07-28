@@ -6,6 +6,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
     case clipboard
     case calculatorHistory
     case emoji
+    case calendar
     // System command modes that render inside the palette (Tinycast/Features/System/SystemCommandViews),
     // matching the Raycast Microphone + Coffee command surface. The no-view immediate actions
     // (Caffeinate/Decaffeinate/Toggle Microphone/Toggle Caffeination) stay plain commands; the five
@@ -21,6 +22,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .calculatorHistory: return "Calculator History"
         case .emoji: return "Emoji & Symbols"
+        case .calendar: return "My Schedule"
         case .setMicrophoneLevel: return "Microphone"
         case .caffeinateFor: return "Caffeinate for"
         case .caffeinateUntil: return "Caffeinate Until"
@@ -33,6 +35,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.doc"
         case .calculatorHistory: return "plus.forwardslash.minus"
         case .emoji: return "face.smiling"
+        case .calendar: return "calendar"
         case .setMicrophoneLevel: return "microphone"
         case .caffeinateFor: return "timer"
         case .caffeinateUntil: return "clock.badge.checkmark"
@@ -45,6 +48,7 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Type to filter entries…"
         case .calculatorHistory: return "Do math, convert units, or search your past calculations…"
         case .emoji: return "Search emoji and symbols…"
+        case .calendar: return "Filter events by title…"
         case .setMicrophoneLevel: return "Set the microphone input level…"
         case .caffeinateFor: return "Keep awake for a duration, e.g. 5m, 2h…"
         case .caffeinateUntil: return "Keep awake until a time or date, e.g. 9am, 5pm, april 9…"
@@ -121,6 +125,7 @@ final class AppCore: ObservableObject {
     let runningApps = RunningAppsMonitor()
     let appUsage = AppUsageStore()
     let palette = PaletteViewModel()
+    let calendarStore: CalendarStore
 
     // System integration: microphone mute/level + caffeination assertions + the two persistent
     // menu-bar status items reflecting their state. AppCore owns the controllers; `SystemStatusItems`
@@ -136,6 +141,7 @@ final class AppCore: ObservableObject {
 
     private init() {
         clipboardManager = ClipboardManager(store: clipboardStore, settings: settings)
+        calendarStore = CalendarStore(settings: settings)
         // Status items observe the controllers, so they're constructed last; no I/O happens until `start()`.
         systemStatusItems = SystemStatusItems(microphone: microphoneController, caffeination: caffeinationController)
     }
@@ -155,6 +161,7 @@ final class AppCore: ObservableObject {
         Task { await appIndex.refresh() }
         Task { await emojiIndex.load() }
         currencyRates.start()
+        calendarStore.refresh()
 
         hotKeys.onTogglePalette = { [weak self] in self?.togglePalette() }
         hotKeys.onToggleClipboard = { [weak self] in self?.toggleClipboard() }
@@ -276,6 +283,7 @@ final class AppCore: ObservableObject {
             SettingsRootView(initialTab: tab)
                 .environmentObject(self.appIndex)
                 .environmentObject(self.visibility)
+                .environmentObject(self.calendarStore)
         }
         if !isNew {
             NotificationCenter.default.post(name: .tinycastSelectSettingsTab, object: tab)
@@ -371,6 +379,9 @@ final class AppCore: ObservableObject {
             showPalette(mode: .clipboard)
         case .searchEmoji:
             showPalette(mode: .emoji)
+        case .mySchedule:
+            showPalette(mode: .calendar)
+            Task { await calendarStore.requestAccessAndRefresh() }
         case .exportSettings:
             hidePalette(restoreFocus: false)
             BackupActions.exportSettings()

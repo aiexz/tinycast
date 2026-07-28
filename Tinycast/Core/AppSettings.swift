@@ -47,6 +47,7 @@ final class AppSettings: ObservableObject {
         static let popToRootTimeout = "popToRootTimeout"
         static let compactMode = "compactMode"
         static let showFavoritesInCompactMode = "showFavoritesInCompactMode"
+        static let calendarEnabledIDs = "calendarEnabledIDs"
         static let showMicrophoneMenuBar = SettingsKey.showMicrophoneMenuBar
         static let showCoffeeMenuBar = SettingsKey.showCoffeeMenuBar
         static let micHideIconWhenUnmuted = SettingsKey.micHideIconWhenUnmuted
@@ -104,6 +105,11 @@ final class AppSettings: ObservableObject {
     /// Pin favorite app icons to the right of the compact search bar (⌘1–⌘5 to launch).
     @Published var showFavoritesInCompactMode: Bool {
         didSet { defaults.set(showFavoritesInCompactMode, forKey: Key.showFavoritesInCompactMode) }
+    }
+
+    /// Calendar identifiers shown by My Schedule. Empty means every calendar, so first use follows the native Calendar app without setup.
+    @Published var calendarEnabledIDs: [String] {
+        didSet { defaults.set(calendarEnabledIDs, forKey: Key.calendarEnabledIDs) }
     }
 
     // MARK: - Menu-bar indicator preferences (Raycast-equivalent)
@@ -164,6 +170,7 @@ final class AppSettings: ObservableObject {
         showFavoritesInCompactMode =
             defaults.object(forKey: Key.showFavoritesInCompactMode) == nil
             || defaults.bool(forKey: Key.showFavoritesInCompactMode)
+        calendarEnabledIDs = defaults.stringArray(forKey: Key.calendarEnabledIDs) ?? []
         // Visibility toggles default to true; absence must be distinguished from a stored `false`.
         showMicrophoneMenuBar =
             defaults.object(forKey: Key.showMicrophoneMenuBar) == nil

@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
 	<true/>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>Tinycast uses your calendar to show upcoming events and let you join meetings.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Tinycast</string>
 </dict>

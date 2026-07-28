@@ -13,6 +13,7 @@ struct RootPaletteView: View {
     @EnvironmentObject private var currencyRates: CurrencyRateStore
     @EnvironmentObject private var emojiIndex: EmojiIndex
     @EnvironmentObject private var frequentEmoji: FrequentEmojiStore
+    @EnvironmentObject private var calendarStore: CalendarStore
     /// Observed so a skin tone changed in Settings re-renders the grid glyphs immediately.
     @ObservedObject private var settings = AppCore.shared.settings
     @FocusState private var searchFocused: Bool
@@ -71,6 +72,7 @@ struct RootPaletteView: View {
     }
     /// Flat grid order across sections — what `vm.selection` indexes in emoji mode.
     private var emojiResults: [EmojiEntry] { emojiSections.flatMap(\.entries) }
+    private var calendarResults: [CalendarEvent] { calendarStore.filteredEvents(query: vm.query) }
 
     /// Inline calculator answer for the current query, live in both the launcher and Calculator History search; when present it occupies flat selection index 0 so rows shift by `calcCount`.
     private var calcResult: CalcResult? {
@@ -85,6 +87,7 @@ struct RootPaletteView: View {
         case .clipboard: return clipResults.count
         case .calculatorHistory: return histResults.count + calcCount
         case .emoji: return emojiResults.count
+        case .calendar: return calendarResults.count
         case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil: return 1
         case .caffeinateWhile: return SystemCommandActions.runningApps.count
         }
@@ -121,6 +124,9 @@ struct RootPaletteView: View {
     private var selectedEmojiEntry: EmojiEntry? {
         emojiResults.indices.contains(selection) ? emojiResults[selection] : nil
     }
+    private var selectedCalendarEvent: CalendarEvent? {
+        calendarResults.indices.contains(selection) ? calendarResults[selection] : nil
+    }
 
     /// The bottom-right Actions menu content for the current mode's selection, or nil when the selection has no actions.
     private var actionsContent: PopoverMenuContent? {
@@ -155,6 +161,9 @@ struct RootPaletteView: View {
                     entry: emoji, core: core, target: vm.pasteTarget)
             }
             return nil
+        case .calendar:
+            guard let event = selectedCalendarEvent else { return nil }
+            return CalendarActionsMenu.content(event: event, store: calendarStore)
         case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
             return nil
         }
@@ -190,7 +199,8 @@ struct RootPaletteView: View {
         let calc = calcResult
         let offset = calc == nil ? 0 : 1
         // Only the active mode is non-empty.
-        let count = apps.count + offset + clips.count + hist.count + emojis.count
+        let calendarEvents = vm.mode == .calendar ? calendarResults : []
+        let count = apps.count + offset + clips.count + hist.count + emojis.count + calendarEvents.count
         let sel = count == 0 ? 0 : min(max(vm.selection, 0), count - 1)
         let calcSelected = calc != nil && sel == 0
         // An error card is selectable but has no action: it must not drive the Copy Answer pill, ⌘K menu, or Enter.
@@ -217,8 +227,9 @@ struct RootPaletteView: View {
                     Color.clear
                 } else {
                     content(
-                        apps: apps, clips: clips, hist: hist, emojiSections: emojiSections, calc: calc,
-                        selection: sel, favoriteCount: favoriteCount, rankedCount: rankedCount,
+                        apps: apps, clips: clips, hist: hist, emojiSections: emojiSections,
+                        calendarEvents: calendarEvents, calc: calc, selection: sel,
+                        favoriteCount: favoriteCount, rankedCount: rankedCount,
                         showSections: showSections
                     )
                 }
@@ -398,7 +409,7 @@ struct RootPaletteView: View {
                 deleteSelectedClip()
             case .calculatorHistory:
                 deleteSelectedHistoryEntry()
-            case .launcher, .emoji, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
+            case .launcher, .emoji, .calendar, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
                 return .ignored
             }
             return .handled
@@ -462,7 +473,7 @@ struct RootPaletteView: View {
     @ViewBuilder
     private func content(
         apps: [AppEntry], clips: [ClipboardItem], hist: [CalcHistoryEntry],
-        emojiSections: [EmojiGridSection], calc: CalcResult?,
+        emojiSections: [EmojiGridSection], calendarEvents: [CalendarEvent], calc: CalcResult?,
         selection: Int, favoriteCount: Int, rankedCount: Int, showSections: Bool
     ) -> some View {
         switch vm.mode {
@@ -572,6 +583,36 @@ struct RootPaletteView: View {
                     }
                 )
             }
+        case .calendar:
+            switch calendarStore.authorizationStatus {
+            case .notDetermined:
+                CalendarPermissionView {
+                    Task { await calendarStore.requestAccessAndRefresh() }
+                }
+            case .fullAccess:
+                if calendarStore.isLoading {
+                    EmptyResults(text: "Loading calendar…")
+                } else if calendarEvents.isEmpty {
+                    EmptyResults(text: isQueryEmpty ? "No upcoming events" : "No matching events")
+                } else {
+                    let selected = calendarEvents.indices.contains(selection) ? calendarEvents[selection] : nil
+                    CalendarScheduleView(
+                        events: calendarEvents,
+                        selectedID: selected?.id,
+                        scrollToken: scrollToken,
+                        showsSummary: isQueryEmpty,
+                        onSelect: { event in vm.selection = calendarEvents.firstIndex(of: event) ?? 0 },
+                        onActivate: { calendarStore.openInCalendar($0) },
+                        onActions: { event in
+                            if let index = calendarEvents.firstIndex(of: event) { vm.selection = index }
+                            openActions()
+                        })
+                }
+            case .denied, .restricted, .writeOnly, .authorized:
+                CalendarPermissionView(denied: true) { Permissions.openCalendarSettings() }
+            @unknown default:
+                CalendarPermissionView(denied: true) { Permissions.openCalendarSettings() }
+            }
         case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
             SystemCommandView(mode: vm.mode, query: vm.query, selection: selection)
         }
@@ -629,6 +670,7 @@ struct RootPaletteView: View {
             return vm.pasteTarget?.pasteTitle ?? "Paste"
         case .calculatorHistory:
             return "Copy Answer"
+        case .calendar: return "Open in Calendar"
         case .setMicrophoneLevel: return "Set Level"
         case .caffeinateFor, .caffeinateUntil, .caffeinateWhile: return "Caffeinate"
         case .launcher:
@@ -701,6 +743,9 @@ struct RootPaletteView: View {
                 core.runningApps.isRunning(app)
             else { return .ignored }
             core.quit(app)
+        case .calendar:
+            guard command, let event = selectedCalendarEvent, event.meetingURL != nil else { return .ignored }
+            calendarStore.join(event)
         case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
             return .ignored
         }
@@ -802,6 +847,9 @@ struct RootPaletteView: View {
         case .emoji:
             guard emojiResults.indices.contains(selection) else { return }
             core.pasteEmoji(emojiResults[selection])
+        case .calendar:
+            guard let event = selectedCalendarEvent else { return }
+            calendarStore.openInCalendar(event)
         case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil:
             SystemCommandActions.submit(mode: vm.mode, query: vm.query)
         case .caffeinateWhile:
