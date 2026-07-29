@@ -458,10 +458,15 @@ struct RootPaletteView: View {
         .frame(maxWidth: .infinity)
     }
 
+    /// Search is single-line: strip every Unicode newline during paste before it reaches palette state.
+    private var searchQuery: Binding<String> {
+        Binding(get: { vm.query }, set: { vm.query = $0.filter { !$0.isNewline } })
+    }
+
     /// The one search field, kept in a single tree position (the `header`) so its focus survives the compact↔expanded swap.
     private var searchField: some View {
         TextField(
-            "", text: $vm.query,
+            "", text: searchQuery,
             prompt: Text(vm.mode.placeholder).foregroundStyle(Theme.Colors.textTertiary)
         )
         .textFieldStyle(.plain)
