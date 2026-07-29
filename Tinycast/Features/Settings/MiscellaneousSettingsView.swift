@@ -58,6 +58,29 @@ struct MiscellaneousSettingsView: View {
                         }
                         .disabled(refreshing)
                     }
+
+                    // The target a bare `300 usd` converts to. Only shown while conversion is on —
+                    // the default is meaningless to a feature the user hasn't consented to.
+                    SettingsDivider()
+                    SettingsRow(
+                        title: "Default Currency",
+                        subtitle: "Target for conversions without a destination, like “300 usd”.",
+                        systemImage: "arrow.triangle.swap",
+                        tint: .green
+                    ) {
+                        Picker("", selection: Binding(
+                            get: { currencyRates.defaultCurrencyOverride ?? "" },
+                            set: { currencyRates.setDefaultCurrency($0.isEmpty ? nil : $0) })
+                        ) {
+                            // Empty selection string is the sentinel for "use the system default".
+                            Text("System Default").tag("")
+                            ForEach(currencyRates.supportedCurrencies, id: \.code) { currency in
+                                Text("\(currency.code) — \(currency.name)").tag(currency.code)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                    }
                 }
             }
         }

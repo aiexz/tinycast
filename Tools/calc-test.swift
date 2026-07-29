@@ -166,7 +166,7 @@ struct CalcTests {
         expectBadges("1hr", source: "Hours", target: "Minutes")
         expectDisplay("5ft", "1.524 m")
         expectDisplay("100g", "3.527396195 oz")
-        expectDisplay("2*3 kg", "13.22773573 lb")  // value side is a full expression
+        expectDisplay("2*3 kg", "6 kg")  // arithmetic retains the typed unit
         expectDisplay("20 celsius", "68 °F")
         expectDisplay("50cm", "19.68503937 in")
         // Ambiguous single-letter aliases stay app searches, not bare temperatures
@@ -258,6 +258,28 @@ struct CalcTests {
         expectDisplay("days s", "86,400 s")
         expectDisplay("hr min", "60 min")
         expectNil("m s")  // different categories → no card, no error
+        // No-connector prefix expression: `10lb kg` = 10 lb in kg; `2*5 lb kg` evaluates the prefix
+        expectDisplay("lb kg", "0.45359237 kg")  // implied 1 still works
+        expectDisplay("10lb kg", "4.5359237 kg")
+        expectDisplay("2*5 lb kg", "4.5359237 kg")
+        expectBadges("10lb kg", source: "Pounds", target: "Kilograms")
+
+        // Typed unit arithmetic converts compatible operands into the rightmost unit.
+        expectDisplay("5kg + 5", "10 kg")
+        expectDisplay("5kg + 5 lb", "16.02311311 lb")
+        expectDisplay("5kg + 5lb to g", "7,267.96185 g")
+        expectDisplay("10lb + 5kg", "9.5359237 kg")
+        expectDisplay("2 * 5kg", "10 kg")
+        expectDisplay("5kg / 500g", "10")
+        expectDisplay("(1kg + 500g) to lb", "3.306933933 lb")
+        expectError("1kg + 1m", "Cannot add Weight and Length.")
+        expectNil("kg + 5")
+        expectNil("5kg +")
+        expectNil("5k + 5")
+        // Currency arithmetic uses the same typed path and injected deterministic rates.
+        expectDisplay("5 eur + 5 usd", "10.43 USD")
+        expectDisplay("5 eur + 5 usd to gbp", "8.24 GBP")
+        expectNilWithoutConsent("5 eur + 5 usd")
 
         // Extra unit categories: speed / pressure / data rate
         expectDisplay("100 kmh to mph", "62.13711922 mph")
@@ -436,6 +458,23 @@ struct CalcTests {
         expectDisplay("1 solana to usd", "50.00 USD")
         expectBadges("1 toncoin to usd", source: "Toncoin", target: "US Dollar")
         expectError("1 doge to usd", "No exchange rate for DOGE.")
+        // MARK: - Default-target & no-connector currency (CurrencyCalculatorFix)
+        // Numeric no-connector pair: `300 usd rub` → 300 USD → RUB (target is explicit, default unused).
+        expectDisplay("300 usd rub", "24,000.00 RUB", "EUR")
+        // Single-source form: `300 usd` converts to the injected default target.
+        expectDisplay("300 usd", "24,000.00 RUB", "RUB")
+        expectDisplay("100 usd", "92.00 EUR", "EUR")
+        // Fallback: when the default target equals the source, USD defers to EUR …
+        expectDisplay("300 usd", "276.00 EUR", "USD")
+        // … and EUR (the fallback itself) defers to USD instead of an identity conversion.
+        expectDisplay("300 eur", "326.09 USD", "EUR")
+        // No snapshot yet: the new single-source form still reports unavailable, never a silent card.
+        expectErrorWithoutRates("300 usd", "Exchange rates unavailable — check your connection.")
+        // Consent off: the new no-connector and single-source forms stay silent, like every currency query.
+        expectNilWithoutConsent("300 usd rub")
+        expectNilWithoutConsent("300 usd")
+        // A two-code implied-1 form keeps its existing contract under the new case shape.
+        expectDisplay("usd rub", "80.00 RUB", "EUR")
         print("\n\(passes) passed, \(failures) failed")
         exit(failures == 0 ? 0 : 1)
     }
@@ -501,7 +540,7 @@ struct CalcTests {
     }
 
     static func expectBadges(_ query: String, source: String, target: String) {
-        guard let result = CalcEngine.evaluate(query, currency: .on(fx)) else {
+        guard let result = CalcEngine.evaluate(query, currency: .on(fx, defaultTarget: "EUR")) else {
             fail(query, expected: "\(source) → \(target)", got: "nil")
             return
         }
@@ -510,7 +549,7 @@ struct CalcTests {
     }
 
     static func expectDisplay(_ query: String, _ expected: String) {
-        guard case .value(let display, _)? = CalcEngine.evaluate(query, currency: .on(fx))?.payload
+        guard case .value(let display, _)? = CalcEngine.evaluate(query, currency: .on(fx, defaultTarget: "EUR"))?.payload
         else {
             fail(query, expected: expected, got: "nil / error")
             return
@@ -519,7 +558,7 @@ struct CalcTests {
     }
 
     static func expectCopy(_ query: String, _ expected: String) {
-        guard case .value(_, let copy)? = CalcEngine.evaluate(query, currency: .on(fx))?.payload
+        guard case .value(_, let copy)? = CalcEngine.evaluate(query, currency: .on(fx, defaultTarget: "EUR"))?.payload
         else {
             fail(query, expected: expected, got: "nil / error")
             return
@@ -528,7 +567,7 @@ struct CalcTests {
     }
 
     static func expectError(_ query: String, _ expected: String) {
-        guard case .error(let message)? = CalcEngine.evaluate(query, currency: .on(fx))?.payload
+        guard case .error(let message)? = CalcEngine.evaluate(query, currency: .on(fx, defaultTarget: "EUR"))?.payload
         else {
             fail(query, expected: "error: \(expected)", got: "nil / value")
             return
@@ -538,13 +577,36 @@ struct CalcTests {
 
     /// Consented, but no snapshot has landed yet — first run, or still offline.
     static func expectErrorWithoutRates(_ query: String, _ expected: String) {
-        guard case .error(let message)? = CalcEngine.evaluate(query, currency: .on(nil))?.payload
+        guard case .error(let message)? = CalcEngine.evaluate(query, currency: .on(nil, defaultTarget: "EUR"))?.payload
         else {
             fail(query, expected: "error: \(expected)", got: "nil / value")
             return
         }
         check(query, expected: expected, got: message)
     }
+
+    /// Display assertion with an injected default target — for `300 usd` and the no-connector forms
+    /// where the conversion direction comes from `CurrencySource` rather than the query.
+    static func expectDisplay(_ query: String, _ expected: String, _ defaultTarget: String) {
+        guard case .value(let display, _)? = CalcEngine.evaluate(
+            query, currency: .on(fx, defaultTarget: defaultTarget))?.payload
+        else {
+            fail(query, expected: expected, got: "nil / error")
+            return
+        }
+        check(query, expected: expected, got: display)
+    }
+
+    static func expectError(_ query: String, _ expected: String, _ defaultTarget: String) {
+        guard case .error(let message)? = CalcEngine.evaluate(
+            query, currency: .on(fx, defaultTarget: defaultTarget))?.payload
+        else {
+            fail(query, expected: "error: \(expected)", got: "nil / value")
+            return
+        }
+        check(query, expected: expected, got: message)
+    }
+
 
     /// No consent: the currency path must not engage. Checks the explicit `.off` source and the
     /// default argument, since a caller that forgets to pass one must still get the feature off.
@@ -569,7 +631,7 @@ struct CalcTests {
     }
 
     static func expectExpression(_ query: String, _ expected: String) {
-        guard let result = CalcEngine.evaluate(query, currency: .on(fx)) else {
+        guard let result = CalcEngine.evaluate(query, currency: .on(fx, defaultTarget: "EUR")) else {
             fail(query, expected: expected, got: "nil")
             return
         }
@@ -577,7 +639,7 @@ struct CalcTests {
     }
 
     static func expectNil(_ query: String) {
-        if let result = CalcEngine.evaluate(query, currency: .on(fx)) {
+        if let result = CalcEngine.evaluate(query, currency: .on(fx, defaultTarget: "EUR")) {
             fail(query, expected: "nil", got: "\(result.payload)")
         } else {
             passes += 1

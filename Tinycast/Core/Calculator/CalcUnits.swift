@@ -78,17 +78,30 @@ enum CalcUnits {
         return .value(input: input, from: from, to: to, output: output)
     }
 
-    /// A no-connector two-unit query (`day s`, `km mi`) → `1 <first>` in `<second>`. Both must be known units in the same category; anything else returns nil so coincidental two-word searches don't produce a card.
+    /// A no-connector two-unit query (`day s`, `km mi`, `10lb kg`) → `<expr> <first>` in `<second>`. Both
+    /// trailing tokens must be known units in the same category; the leading tokens (if any) form a normal
+    /// calculator expression and default to 1 when empty, so `lb kg` still reads as `1 lb` in kg. The
+    /// explicit-connector arm (`parseConversion`) runs first, so `<expr> unit to unit` never lands here.
     static func parseUnitPairConversion(_ tokens: [CalcToken]) -> ConversionParse? {
-        guard tokens.count == 2,
-            case .ident(let fromName) = tokens[0], let from = byName[fromName],
-            case .ident(let toName) = tokens[1], let to = byName[toName],
+        guard tokens.count >= 2,
+            case .ident(let toName) = tokens[tokens.count - 1], let to = byName[toName],
+            case .ident(let fromName) = tokens[tokens.count - 2], let from = byName[fromName],
             from.category == to.category
         else { return nil }
 
-        let output = (1 * from.factor + from.offset - to.offset) / to.factor
+        let valueTokens = Array(tokens[0..<(tokens.count - 2)])
+        let input: Double
+        if valueTokens.isEmpty {
+            input = 1
+        } else if let value = CalcParser.evaluate(valueTokens) {
+            input = value
+        } else {
+            return nil
+        }
+
+        let output = (input * from.factor + from.offset - to.offset) / to.factor
         guard output.isFinite else { return nil }
-        return .value(input: 1, from: from, to: to, output: output)
+        return .value(input: input, from: from, to: to, output: output)
     }
 
     /// Detects `expr unit` with no connector (`1m`, `2*3 kg`) and converts to a curated counterpart from `autoTargets`. Single-letter temperature aliases (c/f/k) are excluded so `5k` stays an app search rather than "5 Kelvin".
@@ -107,6 +120,7 @@ enum CalcUnits {
         guard output.isFinite else { return nil }
         return BareConversion(input: input, from: from, to: to, output: output, compound: mapping.compound)
     }
+
     /// Design PPI conversion: `2 inches in px at 72 ppi` (physical length ↔ pixels) and its reverse
     /// `144 px to in at 72 ppi`. The pixel side is the ident `px`; `ppi`/`at` are structural tokens, not
     /// units in `byName`, so generic `parseConversion` never matches this shape (its last token would be

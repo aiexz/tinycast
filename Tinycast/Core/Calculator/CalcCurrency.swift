@@ -34,7 +34,12 @@ struct CurrencyRates: Codable, Equatable, Sendable {
 /// snapshot has landed yet, which is the state that earns the "rates unavailable" message.
 enum CurrencySource: Equatable, Sendable {
     case off
-    case on(CurrencyRates?)
+    /// - Parameters:
+    ///   - rates: The snapshot, or nil when consent was given but no table has landed yet.
+    ///   - defaultTarget: ISO code of the currency `300 usd` converts *to* when the user names no
+    ///     target. Resolved by `CurrencyRateStore` from an explicit override or the macOS locale,
+    ///     so the engine itself stays free of any system lookup.
+    case on(CurrencyRates?, defaultTarget: String)
 }
 
 enum CalcCurrency {
@@ -53,12 +58,44 @@ enum CalcCurrency {
 
     /// Detects `expr currency (to|in|->) currency`, mirroring `CalcUnits.parseConversion`'s shape so both read the same. Runs *after* the unit path, so a query both sides of which are compatible units (`10 pounds to kg`) never reaches here. A missing amount defaults to 1, so `eur to usd` reads as `1 eur to usd`.
     static func parseConversion(_ inputTokens: [CalcToken], source: CurrencySource) -> ConversionParse? {
-        guard case .on(let rates) = source else { return nil }
+        guard case .on(let rates, let defaultTarget) = source else { return nil }
         if inputTokens.count == 2,
             case .ident(let from) = inputTokens[0], byName[from] != nil,
             case .ident(let to) = inputTokens[1], byName[to] != nil
         {
             return parseConversion([.number(1), .ident(from), .ident("to"), .ident(to)], source: source)
+        }
+
+        // Numeric no-connector pair: `300 usd rub` → 300 USD → RUB. (Two bare codes are already an
+        // implied-1 conversion above; a leading amount means an explicit quantity, not "1 of each".)
+        if inputTokens.count == 3,
+            case .number = inputTokens[0],
+            case .ident(let from) = inputTokens[1], byName[from] != nil,
+            case .ident(let to) = inputTokens[2], byName[to] != nil
+        {
+            return parseConversion(
+                [inputTokens[0], .ident(from), .ident("to"), .ident(to)], source: source)
+        }
+
+        // Single-source form: `300 usd` → 300 USD → the injected default target. Resolves through the
+        // same connector path so shorthand, mismatch and no-rate semantics are reused verbatim.
+        // When the default target lands on the source currency itself, fall back to EUR — or USD if
+        // the source is already EUR — so the conversion stays meaningful, mirroring `CurrencyRateStore`.
+        if inputTokens.count == 2,
+            case .number = inputTokens[0],
+            case .ident(let from) = inputTokens[1], CalcUnits.byName[from] == nil,
+            let fromDef = byName[from]
+        {
+            let targetCode: String?
+            if defaultTarget.uppercased() == fromDef.code {
+                targetCode = fromDef.code == "EUR" ? "USD" : "EUR"
+            } else {
+                targetCode = defaultTarget
+            }
+            guard let to = targetCode.flatMap({ byName[$0.lowercased()] }) else { return nil }
+            return parseConversion(
+                [inputTokens[0], .ident(from), .ident("to"), .ident(to.code.lowercased())],
+                source: source)
         }
 
         var tokens = amountFirst(inputTokens)

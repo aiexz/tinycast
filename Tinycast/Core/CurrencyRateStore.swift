@@ -33,7 +33,13 @@ final class CurrencyRateStore: ObservableObject {
     /// The newest snapshot, or nil when none has landed — and always nil while consent is withheld.
     @Published private(set) var rates: CurrencyRates?
 
+    /// The currency `300 usd` converts to when no target is named. Store-owned like consent (not
+    /// `AppSettings`), so a backup/Raycast import can't smuggle a preferred currency in. `nil` means
+    /// "use the system default" — resolved at read time so a locale change takes effect immediately.
+    @Published private(set) var defaultCurrencyOverride: String?
+
     private static let consentKey = "currencyRatesEnabled"
+    private static let defaultCurrencyKey = "currencyDefaultTarget"
     private let defaults = UserDefaults.standard
     private let fileURL: URL
     private var pump: Task<Void, Never>?
@@ -49,13 +55,50 @@ final class CurrencyRateStore: ObservableObject {
         fileURL = base.appendingPathComponent("currency-rates.json")
 
         // Guard 1 — a disabled feature doesn't even read back a snapshot left on disk.
-        guard isEnabled, let data = try? Data(contentsOf: fileURL) else { return }
+        guard isEnabled, let data = try? Data(contentsOf: fileURL) else {
+            defaultCurrencyOverride = defaults.string(forKey: Self.defaultCurrencyKey)
+            return
+        }
         rates = try? JSONDecoder().decode(CurrencyRates.self, from: data)
+        defaultCurrencyOverride = defaults.string(forKey: Self.defaultCurrencyKey)
     }
 
     /// What the calculator is allowed to use. Guard 2 — the read path: without consent the engine is
     /// handed `.off`, so a currency query produces no card rather than an error about missing rates.
-    var source: CurrencySource { isEnabled ? .on(rates) : .off }
+    var source: CurrencySource {
+        isEnabled ? .on(rates, defaultTarget: effectiveDefaultCurrency) : .off
+    }
+
+    /// The resolved target `300 usd` converts to: the explicit override when set, else the macOS
+    /// locale's currency. Falls back to EUR only when the locale names no currency at all — a stable
+    /// default, never a per-query guess. (The case where the resolved target equals the query's actual
+    /// source is handled in `CalcCurrency`, which knows the source; the store can't, and shouldn't.)
+    var effectiveDefaultCurrency: String {
+        if let override = defaultCurrencyOverride, !override.isEmpty {
+            return override
+        }
+        if let code = Locale.current.currency?.identifier {
+            return code
+        }
+        return "EUR"
+    }
+
+    /// Every fiat currency the calculator can quote, sorted by long name for the Settings picker.
+    /// Crypto is excluded: it isn't a sensible implicit/conversion *target* for a bare `300 usd`.
+    let supportedCurrencies: [CurrencyDef] = {
+        CurrencyData.all
+            .map { CurrencyDef(code: $0.code, name: $0.name) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }()
+
+    /// The Settings picker's setter. Empty/nil clears the override so the locale default takes over.
+    func setDefaultCurrency(_ code: String?) {
+        let normalized = (code ?? "").uppercased()
+        let value = normalized.isEmpty ? nil : normalized
+        guard value != defaultCurrencyOverride else { return }
+        defaultCurrencyOverride = value
+        defaults.set(value, forKey: Self.defaultCurrencyKey)
+    }
 
     /// Starts the refresh loop: fetch whenever the cached snapshot is older than `refreshInterval`,
     /// otherwise sleep exactly until it expires. A failed fetch keeps the stale snapshot and retries

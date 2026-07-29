@@ -30,7 +30,7 @@ struct CalcResult: Equatable, Sendable {
     }
 }
 
-/// Entry point turning a raw query into a calculator answer (or nil when it isn't calculator input), via a pure pre-filter → base → unit → arithmetic pipeline; kept Foundation-only so `Tools/calc-test.swift` compiles it standalone.
+/// Entry point turning a raw query into a calculator answer (or nil when it isn't calculator input), via a pure pre-filter → base → unit → quantity → arithmetic pipeline; kept Foundation-only so `Tools/calc-test.swift` compiles it standalone.
 enum CalcEngine {
     /// Public entry: evaluates against the live clock. `currency` defaults to `.off` so any caller that
     /// hasn't been handed a consented source gets the feature disabled rather than silently enabled.
@@ -106,6 +106,14 @@ enum CalcEngine {
                     copyText: "\(CalcFormatter.copyText(ppi.output)) \(ppi.physicalUnit.symbol)"))
         }
 
+        // Typed arithmetic: `5kg + 5lb`, `10 usd + 5 eur in gbp`, `2 * 5kg`. Runs after the explicit
+        // unit/PPI conversions (so `10 pounds to kg` wins as a plain conversion) and before currency so
+        // unit aliases such as `pounds` keep winning in multi-term expressions. Declines simple/bare
+        // source forms so `300 usd`, `1m`, `10 pounds`, `8 dollars/hour in gbp` stay on their own paths.
+        if let quantity = CalcQuantity.evaluate(tokens, query: query, currency: currency) {
+            return quantity
+        }
+
         // Currency runs after units so an all-unit query keeps winning: `10 pounds to kg` is weight,
         // `10 pounds to euros` is money. Returns nil outright when the user hasn't consented.
         if let conversion = CalcCurrency.parseConversion(tokens, source: currency) {
@@ -135,7 +143,9 @@ enum CalcEngine {
             }
         }
 
-        // Keyword-less conversion: `1m` → feet+inches, `1hr` → 60 min.
+        // Keyword-less conversion: `1m` → feet+inches, `1hr` → 60 min. Runs before the typed path would
+        // have since CalcQuantity declines simple [number, ident] sources anyway, but kept explicit here
+        // as the canonical home for bare auto-conversion.
         if let bare = CalcUnits.parseBareConversion(tokens) {
             let display =
                 bare.compound
