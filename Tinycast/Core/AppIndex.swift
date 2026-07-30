@@ -179,11 +179,14 @@ final class AppIndex: ObservableObject {
         var result: [AppEntry] = []
         for dir in searchDirs {
             guard
-                let items = try? fm.contentsOfDirectory(
-                    at: dir, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]
+                let enumerator = fm.enumerator(
+                    at: dir,
+                    includingPropertiesForKeys: [.isApplicationKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
                 )
             else { continue }
-            for url in items where url.pathExtension == "app" {
+            for case let url as URL in enumerator {
+                guard url.pathExtension == "app" else { continue }
                 let bundle = Bundle(url: url)
                 let bundleID = bundle?.bundleIdentifier
                 // Dedup by bundle id; first directory (/Applications) wins.
