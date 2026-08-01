@@ -11,6 +11,7 @@
 		0DD808F80666846F4E74BAD8 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23591B301A183579098AA019 /* OnboardingView.swift */; };
 		14712478C37E6E8760CA47EC /* HyperKey.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6DC5A4706854493D23FD18A /* HyperKey.swift */; };
 		14A5A5ACD35A572EE906769F /* CalcEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B976C84AFE60E357A346224 /* CalcEngine.swift */; };
+		19A85682EE9C920DD0FC3B9D /* LowPowerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A0E6E01A9ED886EB767234A /* LowPowerController.swift */; };
 		1D0C2F452B3801503B70EA9E /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F63A3610C275E4961D60C7E /* GeneralSettingsView.swift */; };
 		1DF3EED17184DD754E4DF7E0 /* CalendarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD15567CD8CA139334FB714E /* CalendarView.swift */; };
 		1F39D145DBE2290532C93614 /* ClipboardSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 849FF3D93960B75F341D867C /* ClipboardSettingsView.swift */; };
@@ -118,6 +119,7 @@
 		423CFE8AB90484D0309F24C0 /* CalcParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalcParser.swift; sourceTree = "<group>"; };
 		45D4BA6E1BD8EB1F96A8927F /* Tinycast.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tinycast.entitlements; sourceTree = "<group>"; };
 		4802942FF89B327A76432A9B /* AboutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AboutView.swift; sourceTree = "<group>"; };
+		4A0E6E01A9ED886EB767234A /* LowPowerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LowPowerController.swift; sourceTree = "<group>"; };
 		4B432D84D8F9C10521342199 /* RunningApps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunningApps.swift; sourceTree = "<group>"; };
 		4DA7B926405DAC632C056418 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		4F63A3610C275E4961D60C7E /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
@@ -295,6 +297,7 @@
 			isa = PBXGroup;
 			children = (
 				E52F9FB8DCBAB1528F738F4A /* CaffeinationController.swift */,
+				4A0E6E01A9ED886EB767234A /* LowPowerController.swift */,
 				A223ABE2E8E8E43AEA55F838 /* MicrophoneController.swift */,
 				8F029A6F0E3E475896C5FA7A /* SystemCommandViews.swift */,
 			);
@@ -560,6 +563,7 @@
 				F5F3381FF70997223F8888B0 /* KeyShortcut.swift in Sources */,
 				A0DB31CA35D9A980CA984EDE /* LaunchAtLogin.swift in Sources */,
 				DCC36924E538C11136CEC060 /* LauncherView.swift in Sources */,
+				19A85682EE9C920DD0FC3B9D /* LowPowerController.swift in Sources */,
 				3C9E773C72B82602E2727DA0 /* MicrophoneController.swift in Sources */,
 				8F7431A1340D0A5783599087 /* MiscellaneousSettingsView.swift in Sources */,
 				6962B8A2850A45401275F677 /* NotificationToken.swift in Sources */,

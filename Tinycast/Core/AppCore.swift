@@ -140,6 +140,7 @@ final class AppCore: ObservableObject {
     // AppCore remains their single lifecycle owner.
     let microphoneController = MicrophoneController()
     let caffeinationController = CaffeinationController()
+    let lowPowerController = LowPowerController()
     let systemStatusItems: SystemStatusItems
 
     private lazy var windowController = PaletteWindowController(core: self)
@@ -182,6 +183,7 @@ final class AppCore: ObservableObject {
         caffeinationController.start()
         Task { await microphoneController.refresh() }
         systemStatusItems.start()
+        lowPowerController.start()
 
         // First launch has no palette hotkey bound and shows nothing but the menu-bar icon; guide the user once. Marker is written at show-time so it stays one-time even if they Cmd-Q mid-flow.
         if !OnboardingState.hasOnboarded {
@@ -193,6 +195,7 @@ final class AppCore: ObservableObject {
     func prepareForTermination() {
         caffeinationController.prepareForTermination()
         systemStatusItems.stop()
+        lowPowerController.stop()
     }
 
 
@@ -431,6 +434,9 @@ final class AppCore: ObservableObject {
             showPalette(mode: .caffeinateWhile)
         case .cameraPreview:
             showPalette(mode: .cameraPreview)
+        case .toggleLowPower:
+            hidePalette(restoreFocus: false)
+            Task { await lowPowerController.toggle() }
         case .quitAllApps:
             // Hide before confirming: the palette is a floating panel and would sit above the alert.
             hidePalette(restoreFocus: false)

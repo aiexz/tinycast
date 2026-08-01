@@ -117,7 +117,7 @@ final class SystemStatusItems {
         guard let mode = caffeination?.mode, mode != .inactive, let item = coffeeItem else { return }
         item.menu = coffeeMenu(mode: mode)
     }
-    
+
     // MARK: - Menus
     
     private func micMenu(isMuted: Bool) -> NSMenu {
@@ -180,7 +180,7 @@ final class SystemStatusItems {
         
         return menu
     }
-    
+
     @objc private func toggleMic() { Task { [microphone] in await microphone?.toggleMuted() } }
     @objc private func openMicSettings() { AppCore.shared.showSettings(tab: .general) }
     @objc private func openSetMicLevel() { AppCore.shared.showPalette(mode: .setMicrophoneLevel) }

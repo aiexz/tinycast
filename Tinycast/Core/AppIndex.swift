@@ -33,7 +33,15 @@ struct AppEntry: Identifiable, Hashable, Sendable {
 
     /// Command entries draw an SF Symbol tile; everything else uses its file icon.
     var isSymbolIcon: Bool { kind == .command }
-    var symbolIconName: String { CommandRegistry.command(for: self)?.sfSymbol ?? "questionmark" }
+    /// Command entries draw an SF Symbol tile. `toggleLowPower` reads the live system state via
+    /// `ProcessInfo` (thread-safe, nonisolated) so the launcher result reflects the current LPM
+    /// setting without crossing actor boundaries.
+    var symbolIconName: String {
+        if CommandRegistry.command(for: self) == .toggleLowPower,
+           ProcessInfo.processInfo.isLowPowerModeEnabled
+        { return "battery.100" }
+        return CommandRegistry.command(for: self)?.sfSymbol ?? "questionmark"
+    }
 
     var icon: NSImage {
         isSymbolIcon

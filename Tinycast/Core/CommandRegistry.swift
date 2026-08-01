@@ -28,6 +28,10 @@ enum CommandID: String, CaseIterable, Sendable {
     case caffeinateUntil = "command:caffeinate-until"
     case caffeinateWhile = "command:caffeinate-while"
     case cameraPreview = "command:camera-preview"
+    // Low Power Mode toggle — a System-state command like `toggleCaffeination`. macOS exposes no
+    // public toggle API, so `LowPowerController` flips it via `osascript … with administrator
+    // privileges` (the standard GUI admin-password gate); read state is `ProcessInfo`.
+    case toggleLowPower = "command:toggle-low-power"
 
     var name: String {
         switch self {
@@ -50,6 +54,7 @@ enum CommandID: String, CaseIterable, Sendable {
         case .caffeinateFor: return "Caffeinate for…"
         case .caffeinateUntil: return "Caffeinate Until"
         case .caffeinateWhile: return "Caffeinate While"
+        case .toggleLowPower: return "Toggle Low Power Mode"
         case .cameraPreview: return "Camera Preview"
         }
     }
@@ -76,6 +81,7 @@ enum CommandID: String, CaseIterable, Sendable {
         case .caffeinateUntil: return "clock.badge.checkmark"
         case .cameraPreview: return "video"
         case .caffeinateWhile: return "macwindow"
+        case .toggleLowPower: return "battery.0"
         }
     }
 }
