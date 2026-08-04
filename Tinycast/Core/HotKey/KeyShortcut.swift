@@ -87,14 +87,14 @@ struct KeyShortcut: Hashable, Sendable {
         kVK_Return: "↵", kVK_ANSI_KeypadEnter: "⌤", kVK_Tab: "⇥", kVK_Space: "Space",
         kVK_Delete: "⌫", kVK_ForwardDelete: "⌦", kVK_Escape: "⎋",
         kVK_LeftArrow: "←", kVK_RightArrow: "→", kVK_UpArrow: "↑", kVK_DownArrow: "↓",
-        kVK_Home: "↖", kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟", kVK_Help: "?⃝",
+        kVK_Home: "↖", kVK_End: "↘", kVK_PageUp: "⇞", kVK_PageDown: "⇟", kVK_Help: "?⃝"
     ]
 
     private static let functionKeyNames: [Int: String] = [
         kVK_F1: "F1", kVK_F2: "F2", kVK_F3: "F3", kVK_F4: "F4", kVK_F5: "F5",
         kVK_F6: "F6", kVK_F7: "F7", kVK_F8: "F8", kVK_F9: "F9", kVK_F10: "F10",
         kVK_F11: "F11", kVK_F12: "F12", kVK_F13: "F13", kVK_F14: "F14", kVK_F15: "F15",
-        kVK_F16: "F16", kVK_F17: "F17", kVK_F18: "F18", kVK_F19: "F19", kVK_F20: "F20",
+        kVK_F16: "F16", kVK_F17: "F17", kVK_F18: "F18", kVK_F19: "F19", kVK_F20: "F20"
     ]
 
     // `TISGetInputSourceProperty` is only safe on the main thread.
@@ -152,6 +152,10 @@ enum HotKeyAction: Hashable, Sendable {
     case toggleEmoji
     case app(bundleID: String)
     case settingsPane(bundleID: String)
+    case customCommand(id: UUID)
+    case systemAction(id: SystemAction.ID)
+    case windowCommand(id: WindowCommand.ID)
+    case quicklink(id: UUID)
 
     /// UserDefaults key holding the shortcut JSON; the `KeyboardShortcuts_` prefix is a fossil of the replaced package, kept verbatim so existing bindings need no migration.
     var defaultsKey: String {
@@ -161,6 +165,12 @@ enum HotKeyAction: Hashable, Sendable {
         case .toggleEmoji: "KeyboardShortcuts_toggleEmoji"
         case .app(let bundleID): "KeyboardShortcuts_appHotkey." + bundleID
         case .settingsPane(let bundleID): "KeyboardShortcuts_paneHotkey." + bundleID
+        case .customCommand(let id):
+            "KeyboardShortcuts_customCommandHotkey." + id.uuidString.lowercased()
+        case .systemAction(let id): "KeyboardShortcuts_systemActionHotkey." + id.rawValue
+        case .windowCommand(let id): "KeyboardShortcuts_windowCommandHotkey." + id.rawValue
+        case .quicklink(let id):
+            "KeyboardShortcuts_quicklinkHotkey." + id.uuidString.lowercased()
         }
     }
 }

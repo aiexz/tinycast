@@ -8,6 +8,7 @@ struct BackupSettingsView: View {
     @State private var importing = false
     @State private var status: Status?
     @State private var selection: RaycastImportOptions = .all
+    @State private var format: RaycastFormat?
 
     private enum Status {
         case success(String)
@@ -18,6 +19,13 @@ struct BackupSettingsView: View {
         runningApps.runningBundleIDs.contains(where: BackupActions.isRaycastBundleID)
     }
 
+    private var raycastFileSubtitle: String {
+        guard let name = raycastFile?.lastPathComponent else {
+            return "Choose a .rayconfig file exported from Raycast."
+        }
+        return "\(name) — \(format?.title ?? "not a Raycast export")"
+    }
+
     var body: some View {
         SettingsPane(
             title: "Backup",
@@ -26,11 +34,12 @@ struct BackupSettingsView: View {
             SettingsCard(header: "Tinycast") {
                 SettingsRow(
                     title: "Export Settings",
-                    subtitle: "Save your shortcuts, favorites, and preferences to a JSON file.",
+                    subtitle:
+                        "Save your shortcuts, custom commands, favorites, and preferences to JSON.",
                     systemImage: "square.and.arrow.up",
                     tint: .blue
                 ) {
-                    Button("Export…") { BackupActions.exportSettings() }
+                    Button("Export…") { Task { await BackupActions.exportSettings() } }
                         .controlSize(.small)
                 }
                 SettingsDivider()
@@ -41,7 +50,7 @@ struct BackupSettingsView: View {
                     systemImage: "square.and.arrow.down",
                     tint: .green
                 ) {
-                    Button("Import…") { BackupActions.importSettings() }
+                    Button("Import…") { Task { await BackupActions.importSettings() } }
                         .controlSize(.small)
                 }
             }
@@ -49,8 +58,7 @@ struct BackupSettingsView: View {
             SettingsCard(header: "Import from Raycast") {
                 SettingsRow(
                     title: "Raycast Export",
-                    subtitle: raycastFile?.lastPathComponent
-                        ?? "Choose a .rayconfig file exported from Raycast.",
+                    subtitle: raycastFileSubtitle,
                     systemImage: "doc.badge.gearshape",
                     tint: .orange
                 ) {
@@ -81,10 +89,10 @@ struct BackupSettingsView: View {
                     } else {
                         Button("Import") { runRaycastImport() }
                             .controlSize(.small)
-                            .disabled(raycastFile == nil || passphrase.isEmpty || selection.isEmpty)
+                            .disabled(format == nil || passphrase.isEmpty || selection.isEmpty)
                     }
                 }
-                RaycastImportSelection(selection: $selection)
+                RaycastImportSelection(selection: $selection, format: format)
                     .padding(.horizontal, Theme.Spacing.xl)
                     .padding(.bottom, Theme.Spacing.lg)
                 conflictCallout
@@ -128,8 +136,7 @@ struct BackupSettingsView: View {
                 EmptyView()
             }
         case .failure(let message):
-            SettingsRow(title: message, systemImage: "exclamationmark.triangle.fill", tint: .orange)
-            {
+            SettingsRow(title: message, systemImage: "exclamationmark.triangle.fill", tint: .orange) {
                 EmptyView()
             }
         }
@@ -138,13 +145,14 @@ struct BackupSettingsView: View {
     private func chooseRaycastFile() {
         guard let url = BackupActions.pickRaycastFile() else { return }
         raycastFile = url
+        format = BackupActions.detectRaycastFormat(of: url)
         status = nil
     }
 
     private func runRaycastImport() {
-        guard let file = raycastFile, !passphrase.isEmpty, !selection.isEmpty, !importing else {
-            return
-        }
+        guard let file = raycastFile, format != nil, !passphrase.isEmpty, !selection.isEmpty,
+            !importing
+        else { return }
         importing = true
         status = nil
         Task {
@@ -152,10 +160,20 @@ struct BackupSettingsView: View {
             do {
                 let outcome = try await BackupActions.importRaycast(
                     file: file, passphrase: passphrase, options: selection)
-                var message = BackupActions.summaryText(outcome.summary)
+                var parts: [String] = []
+                if let applied = BackupActions.appliedText(outcome.summary) { parts.append(applied) }
                 if outcome.clipboardImported > 0 {
-                    message += " Imported \(outcome.clipboardImported) clipboard entries."
+                    parts.append("Imported \(outcome.clipboardImported) clipboard entries.")
                 }
+                if outcome.snippetsImported > 0 {
+                    let noun = outcome.snippetsImported == 1 ? "snippet" : "snippets"
+                    parts.append("Imported \(outcome.snippetsImported) \(noun).")
+                }
+                if let snippetsError = outcome.snippetsError {
+                    parts.append("Couldn’t import snippets: \(snippetsError)")
+                }
+                var message = parts.isEmpty
+                    ? BackupActions.nothingImportedText : parts.joined(separator: " ")
                 if outcome.missingImages > 0 {
                     message += " \(outcome.missingImages) images were unavailable and skipped."
                 }

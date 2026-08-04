@@ -194,11 +194,20 @@ enum CalcCurrency {
     /// Money is written sign-first (`€20`), so a leading currency ident followed by its amount is swapped back into the `amount currency …` order every parser here expects.
     private static func amountFirst(_ tokens: [CalcToken]) -> [CalcToken] {
         guard tokens.count >= 2, case .ident(let name) = tokens[0], byName[name] != nil,
-            case .number = tokens[1]
+            numberToken(tokens[1])
         else { return tokens }
         var reordered = tokens
         reordered.swapAt(0, 1)
         return reordered
+    }
+
+    private static func numberToken(_ token: CalcToken) -> Bool {
+        switch token {
+        case .number, .compactNumber:
+            return true
+        default:
+            return false
+        }
     }
 
     /// The only currency data still written by hand: nouns several currencies share, where CLDR
@@ -239,7 +248,7 @@ enum CalcCurrency {
         "KRW": ["won"],  // 2
         "RON": ["leu", "lei"],  // 2
         "RUB": ["ruble", "rubles"],  // 2
-        "SAR": ["riyal", "riyals"],  // 2
+        "SAR": ["riyal", "riyals"]  // 2
     ]
 
     /// Lookup by lowercased ident. Codes, display names and uncontested nouns come from

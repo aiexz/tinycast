@@ -13,16 +13,89 @@ also **pure**: the one input it can't compute, the FX rate table, is passed in (
    `today + 3 weeks`)
 2. Numeric reject
 3. Tokenize
-4. Base conversion
-5. Explicit unit conversion (`10km to mi`)
-6. **Currency conversion** (`1 euro to dollars`, `€20 to GBP`)
-7. **Bare-unit auto-conversion** (`1m` → feet + inches, `1hr` → 60 min, via
+4. Complete-prefix evaluation for a trailing binary operator (`10kg +` → `10 kg`)
+5. Base conversion
+6. Explicit unit conversion (`10km to mi`)
+7. **Typed quantity arithmetic** (`10kg + 500g`, `$10 + €5`, `(1hr + 30min) to s`)
+8. **Currency conversion** (`1 euro to dollars`, `€20 to GBP`)
+9. **Bare-unit auto-conversion** (`1m` → feet + inches, `1hr` → 60 min, via
    `CalcUnits.parseBareConversion` + the `autoTargets` map)
-8. Plain arithmetic
+10. Plain arithmetic
 
 Date/time depends on the clock, so it takes an injected `now` / `calendar` — the public `evaluate(_:)`
 uses the live clock, and `evaluate(_:now:calendar:)` lets `calc-test.swift` assert exact strings
 against a fixed clock.
+
+`CalcQuantity` is a separate typed precedence parser rather than a mode added to the scalar
+`CalcParser`. Scalar `*` / `/` preserve the unit, compatible quantity division returns a scalar, and a
+trailing `to` / `in` converts the complete expression. Percentages keep relative semantics for addition
+(`10kg + 20%` → `12 kg`) and act as fractional scalars for multiplication and division
+(`10kg * 3%` → `0.3 kg`, `10kg / 25%` → `40 kg`).
+
+**The last unit typed decides the answer's unit.** `+` / `-` convert the *left* side into the right
+operand's unit, so `5feet + 1m` is `2.524 m` and `10kg + 500g` is `10,500 g` — the unit you finished
+writing is the one you were thinking in. Chains are left-associative, so `1kg + 500g + 2lb` ends in
+pounds. A conversion suffix overrides it entirely (`10kg + 500g to lb`).
+
+Adjacency is the exception. `5 feet 3 inches` and `1hr 30min` are one quantity in composite notation,
+not a sum, so they answer in the *leading* unit (`5.25 ft`, `1.5 hr`). `QuantityParser.peekBinary`
+already distinguishes the two — it reports `consumesToken: false` for the invisible `+` between
+adjacent quantities — and `addOrSubtract` keys the unit choice off exactly that flag.
+
+A bare number takes the unit it is written against: `5kg+5` is `10 kg`, `$10 + 5` is `15.00 USD`. Under
+adjacency the same input stays silent, because there a bare trailing number is a unit still being
+typed — `1hr 30` is one keystroke short of `1hr 30min`, and answering `31 hr` would be worse than
+answering nothing.
+
+Once an operator is involved the answer stays in the units written, so `2 * 5kg` is `10 kg`. Only a
+bare quantity (`50cm`, `1m`) falls through to the keyword-less auto-conversion below.
+
+Derived dimensions are deliberately not guessed: multiplying two unit values returns a clear error.
+Affine temperatures may only be added or subtracted when both operands use the same scale; treating
+an absolute Celsius/Fahrenheit value as a delta would silently produce physically incorrect answers.
+
+Errors are reserved for input that can only be a mistake — two incompatible units (`1kg + 1m`), or a
+unit against a currency. Everything else that cannot be evaluated stays silent rather than flashing a
+card mid-keystroke.
+
+An attached `k` is a thousands suffix (`10k` → `10,000`), while whitespace keeps Kelvin explicit
+(`10 k to c`); the established attached Kelvin conversion form remains valid when the temperature
+target makes the intent unambiguous (`273.15K to C`).
+
+Scientific notation (`1e5` → `100,000`, `5e-3km`, `3e+2`) is read only while the exponent hugs the
+mantissa, which is what keeps `2 e` and `2e` reading as 2 × Euler's *e* — an exponent needs digits
+after the `e`. Like `10k`, it tokenizes as a shorthand rather than a plain literal, so a lone `1e5`
+still earns a card where a lone `100000` deliberately doesn't. A literal that overflows to infinity
+(`1e400`) is treated as non-calculator input, not as a card.
+
+## Implicit multiplication
+
+Juxtaposition means `*` at the same binding power as an explicit one (`4(2+3)` → 20, `2pi`,
+`2sqrt(9)`, `(2+3)(2+3)`), so it binds tighter than `+` and looser than `^`, and `6/2(1+2)` agrees
+with `6/2*(1+2)`. `CalcParser.parseExpression` checks it after `peekBinary()` fails and, unlike a real
+operator, consumes no token before parsing the right operand.
+
+The scalar side is deliberately narrow: only `(` or a name in `CalcParser.constants` / `functions`
+starts an implicit product. Adjacent *numbers* never do — `5 3` stays an app search — and no unit or
+currency name is a constant or function, so `10km` keeps its own path. `QuantityParser.peekBinary`
+carries the same `(` rule so the typed side agrees (`$5(2)` → `10.00 USD`, `2(3)kg` → `6 kg`, matching
+`2*(3)kg`); adjacency there still means the composite-quantity `+` described above, never a product.
+
+## Modulo
+
+`mod` is a binary operator at `*` / `/` precedence, computed with `truncatingRemainder` so the sign
+follows the dividend (`-10 mod 3` → -1). It is spelled out on purpose: `%` already means percent, and
+`20% - 5` offers no local signal to tell a percent from a remainder, so overloading the symbol would
+silently rewrite expressions like `450 + 20% - 5`.
+
+A query ending in a binary operator keeps the last complete prefix visible while the next operand is
+being typed: `10 +` shows `10`, `10kg + 500g +` shows `10,500 g`, and `$10 +` shows `10.00 USD`
+when currency is enabled. The prefix must itself be valid, so malformed input and incomplete
+parentheses remain silent. The partial result preserves the complete prefix's target badge, making
+the result's unit or currency explicit beneath the value. Only operators qualify — a trailing English
+word such as `of` does not, so `10 of` stays a search. When the prefix was a conversion the card
+echoes the typed text (`10km to mi ×`) rather than the conversion's own shortened echo, and
+`tokenQuery` keeps radix prefixes so `0xff -` still reads Hexadecimal → Decimal.
 
 ## Currency
 
@@ -60,6 +133,12 @@ of which are compatible units stays a measurement: `10 pounds to kg` is weight, 
 is money, and `1 cup to ml` stays volume even though `CUP` is the Cuban peso. A currency on one side
 and a unit on the other produces the same friendly category error as any other mismatch
 (`Cannot convert Currency to Weight.`).
+
+The typed quantity path uses the same ordering and injected rate snapshot. Currency arithmetic is
+therefore deterministic and consent-gated: `$10 + €5` converts the left operand into euros when rates
+are available — the same last-unit-typed rule the measurements follow — while the entire path is
+absent when consent is off. Bare prefix and suffix signs (`$10`, `10$`) are accepted, and a conversion
+suffix applies to the whole expression.
 
 ### Consent
 

@@ -15,6 +15,9 @@ struct CalcTests {
         expectDisplay("100/4", "25")
         expectDisplay("2^10", "1,024")
         expectDisplay("2^3^2", "512")  // right-associative
+        expectDisplay("2**2", "4")  // "**" is an alias for "^" (Python/JS/shell spelling)
+        expectDisplay("2**10", "1,024")
+        expectDisplay("2**3**2", "512")  // right-associative, same as "^"
         expectDisplay("(5+2)*3", "21")
         expectDisplay("5!", "120")
         expectDisplay("3!!", "720")  // (3!)! — chained postfix
@@ -24,6 +27,31 @@ struct CalcTests {
         expectDisplay("1/3", "0.3333333333")
         expectDisplay("2.5 * 4", "10")
         expectDisplay("1,000 + 234", "1,234")  // grouping commas accepted in input
+
+        // Compact thousands suffix — attached `k` is a number suffix; spaced `k` remains Kelvin
+        expectDisplay("10k", "10,000")
+        expectCopy("10k", "10000")
+        expectDisplay("2.5K", "2,500")
+        expectDisplay("10k + 500", "10,500")
+        expectDisplay("10k * 2", "20,000")
+        expectBadges("10k", source: "Expression", target: "Result")
+
+        // Scientific notation input
+        expectDisplay("1e6 + 1", "1,000,001")
+        expectDisplay("1.5e-3 * 2", "0.003")
+        expectDisplay("2.5e8 / 2", "125,000,000")
+        expectDisplay("1E6 + 1", "1,000,001")  // uppercase E
+        expectDisplay("1e6", "1,000,000")  // a lone shorthand literal cards like "10k"
+        expectNil("10em")  // partial "e" isn't an exponent, so the ident scanner still gets it
+        expectDisplay("1e3k + 1", "1,000,001")  // exponent then compact suffix, both applied
+
+        // Exact up to 2^53, past the old 1e15 cutoff — truncating these lost real digits on copy
+        expectDisplay("2^49", "562,949,953,421,312")
+        expectDisplay("2^50", "1,125,899,906,842,624")
+        expectCopy("2^50", "1125899906842624")
+        expectDisplay("999999999999999 + 1", "1,000,000,000,000,000")  // exactly the old cutoff
+        // Beyond 2^53 the precision is genuinely gone, so exponent form is the honest answer
+        expectDisplay("123456789 * 123456789", "1.524157875e+16")
 
         // Functions
         expectDisplay("sqrt(64)", "8")
@@ -46,11 +74,50 @@ struct CalcTests {
         expectDisplay("π*2", "6.283185307")
         expectDisplay("e^2", "7.389056099")
 
+        // Implicit multiplication
+        expectDisplay("4(2+3)", "20")
+        expectDisplay("(2+3)(2+3)", "25")
+        expectDisplay("2pi", "6.283185307")
+        expectDisplay("2π", "6.283185307")
+        expectDisplay("2sqrt(9)", "6")
+        expectDisplay("2(3+1)+1", "9")  // implicit "*" binds like explicit "*", not looser
+        expectDisplay("10π ^e", "224.5915772")  // and looser than "^"
+        // Units are never mistaken for a constant/function, so this stays untouched
+        expectDisplay("10km to mi", "6.213711922 mi")
+        // Juxtaposition against a bracket carries the unit through, matching explicit "*"
+        expectDisplay("2(3)kg", "6 kg")
+        expectDisplay("2*(3)kg", "6 kg")
+
+        // Scientific notation — only when the exponent hugs the mantissa
+        expectDisplay("1e5", "100,000")
+        expectDisplay("2e10", "20,000,000,000")
+        expectDisplay("1E5", "100,000")
+        expectDisplay("1.5e3", "1,500")
+        expectDisplay("3e+2", "300")
+        expectCopy("1e-5", "1e-05")
+        expectDisplay("2e10/2", "10,000,000,000")
+        expectDisplay("1e5 to hex", "0x186A0")
+        expectDisplay("5e-3km", "0.003106855961 mi")
+        expectDisplay("2e", "5.436563657")  // no digits after "e" — still 2 × Euler's e
+        expectDisplay("1 e", "2.718281828")  // detached — never an exponent
+        expectNil("1e400")  // overflows to infinity, so not calculator input
+        expectNil("1e5e5")
+
         // Percent
         expectDisplay("20% of 450", "90")
         expectDisplay("450 + 20%", "540")
         expectDisplay("450 - 15%", "382.5")
         expectDisplay("20%", "0.2")
+
+        // Modulo — spelled out, so it never competes with the percent cases above
+        expectDisplay("10 mod 3", "1")
+        expectDisplay("17 mod 5", "2")
+        expectDisplay("10k mod 3", "1")
+        expectDisplay("-10 mod 3", "-1")  // fmod semantics: the sign follows the dividend
+        expectDisplay("2 + 10 mod 3", "3")  // same precedence as * and /, binds tighter than +
+        expectNil("10 mod 0")
+        expectNil("10 % 3")  // "%" stays percent, whatever follows it
+        expectDisplay("450 + 20% - 5", "535")
 
         // Unit conversion — length / weight / temperature / time / area / volume / storage
         expectDisplay("10km to mi", "6.213711922 mi")
@@ -63,7 +130,9 @@ struct CalcTests {
         expectDisplay("2.2 lbs to kg", "0.997903214 kg")
         expectDisplay("100 C to F", "212 °F")
         expectDisplay("32F to C", "0 °C")
-        expectDisplay("273.15K to C", "0 °C")
+        expectDisplay("273.15K to C", "0 °C")  // attached Kelvin remains valid in a conversion
+        expectDisplay("273.15 K to C", "0 °C")
+        expectDisplay("10 k to c", "-263.15 °C")
         expectDisplay("0 F to C", "-17.77777778 °C")
         expectDisplay("300 K to C", "26.85 °C")
         expectDisplay("90min to hr", "1.5 hr")
@@ -139,7 +208,7 @@ struct CalcTests {
         expectNil("e")
         expectNil("10km to")  // half-typed conversion
         expectNil("10 to mi")
-        expectNil("45+")  // half-typed expression
+        expectDisplay("45+", "45")  // safe trailing operators keep the last complete result
         expectNil("sqrt()")
         expectNil("2.5!")  // factorial needs an integer
         expectNil("")
@@ -166,13 +235,165 @@ struct CalcTests {
         expectBadges("1hr", source: "Hours", target: "Minutes")
         expectDisplay("5ft", "1.524 m")
         expectDisplay("100g", "3.527396195 oz")
-        expectDisplay("2*3 kg", "6 kg")  // arithmetic retains the typed unit
+        expectDisplay("2*3 kg", "6 kg")  // an operator keeps the answer in the units written
         expectDisplay("20 celsius", "68 °F")
         expectDisplay("50cm", "19.68503937 in")
         // Ambiguous single-letter aliases stay app searches, not bare temperatures
-        expectNil("5k")
+        expectNil("5 k")
         expectNil("100 c")
         expectNil("32f")
+
+        // Unit expressions — addition/subtraction converts the RHS and keeps the leftmost unit
+        expectDisplay("10kg + 5kg", "15 kg")
+        expectCopy("10kg + 5kg", "15 kg")
+        expectExpression("10kg + 5kg", "10 kg + 5 kg")
+        // Signs, parens and postfix % hug their operand instead of floating as separate words
+        expectExpression("10kg * 3%", "10 kg × 3%")
+        expectExpression("(10kg + 5kg) * 3%", "(10 kg + 5 kg) × 3%")
+        expectExpression("-5kg + 2kg", "-5 kg + 2 kg")
+        expectExpression("5 feet 3 inches", "5 ft 3 in")
+        expectBadges("10kg + 5kg", source: "Expression", target: "Kilograms")
+        expectDisplay("10kg + 10g", "10,010 g")  // issue #64, answered in the last unit typed
+        expectDisplay("10kg + 500g", "10,500 g")
+        expectDisplay("500g + 1kg", "1.5 kg")
+        expectCopy("500g + 1kg", "1.5 kg")
+        expectDisplay("10lb + 5kg", "9.5359237 kg")
+        expectDisplay("1m + 50cm", "150 cm")
+        expectDisplay("2hr + 30min", "150 min")
+        expectDisplay("1GiB + 512MiB", "1,536 MiB")
+        expectDisplay("1L - 250mL", "750 mL")
+        expectDisplay("-5kg + 2kg", "-3 kg")
+        expectDisplay("-(2kg + 500g)", "-2,500 g")
+        expectDisplay("10 pounds + 5 pounds", "15 lb")  // unit wins the currency collision
+        expectDisplay("1m² + 10ft²", "20.76391042 ft²")
+        expectDisplay("1L + 1cup", "5.226752838 cup")
+        expectDisplay("1GB + 1GiB", "1.931322575 GiB")
+        expectDisplay("90deg + 1rad", "2.570796327 rad")
+        expectDisplay("60mph + 10kmh", "106.56064 km/h")
+        expectDisplay("1bar + 10psi", "24.50377377 psi")
+        expectDisplay("1Gbps + 500Mbps", "1,500 Mbps")
+
+        // Unit-expression precedence, parentheses, scalar operations, and cancellation
+        expectDisplay("10kg + 2 * 5kg", "20 kg")
+        expectDisplay("(10kg + 5kg) * 2", "30 kg")
+        expectDisplay("2 * (3kg + 500g)", "7,000 g")
+        expectDisplay("20kg / 2 + 3kg", "13 kg")
+        expectDisplay("20kg / (2 + 3)", "4 kg")
+        expectDisplay("5kg * 3", "15 kg")
+        expectDisplay("10kg / 4", "2.5 kg")
+        expectDisplay("5kg / 2kg", "2.5")
+        expectBadges("5kg / 2kg", source: "Expression", target: "Result")
+        expectDisplay("5kg / 500g", "10")
+        expectDisplay("1kg / 3", "0.3333333333 kg")
+        expectDisplay("10kg * (2 + 3)", "50 kg")
+        expectDisplay("10kg / (2 * 5)", "1 kg")
+        expectDisplay("(10kg * 3) / 5kg", "6")
+        expectDisplay("10kg / (5kg / 2)", "4")
+        expectDisplay("(2kg + 500g) * 4", "10,000 g")
+        expectDisplay("(20kg - 5kg) / 3", "5 kg")
+
+        // Percentages carry through quantity arithmetic
+        expectDisplay("10kg + 20%", "12 kg")
+        expectDisplay("10kg - 20%", "8 kg")
+        expectDisplay("10kg * 20%", "2 kg")
+        expectDisplay("10kg * 3%", "0.3 kg")
+        expectDisplay("3% * 10kg", "0.3 kg")
+        expectDisplay("10kg * 0%", "0 kg")
+        expectDisplay("10kg * -3%", "-0.3 kg")
+        expectDisplay("10kg / 25%", "40 kg")
+        expectDisplay("10kg / 200%", "5 kg")
+        expectDisplay("10kg * 3% + 1kg", "1.3 kg")
+        expectDisplay("(10kg + 5kg) * 3%", "0.45 kg")
+        expectDisplay("10kg * 3% to g", "300 g")
+        expectCopy("10kg * 3% to g", "300 g")
+        expectDisplay("20% of (10kg + 5kg)", "3 kg")
+        expectDisplay("3% of 10kg", "0.3 kg")
+        expectNil("10kg / 0%")
+        expectDisplay("19m + 47%", "27.93 m")  // documented Raycast behavior
+
+        // Incomplete expressions retain the last complete, actionable result
+        expectDisplay("10 +", "10")
+        expectDisplay("10 -", "10")
+        expectDisplay("10 *", "10")
+        expectDisplay("10 /", "10")
+        expectDisplay("10 ^", "10")
+        expectDisplay("10k +", "10,000")
+        expectCopy("10k +", "10000")
+        expectDisplay("10kg *", "10 kg")
+        expectDisplay("10kg + 500g +", "10,500 g")
+        expectDisplay("(10kg + 500g) *", "10,500 g")
+        expectDisplay("10kg * 3% +", "0.3 kg")
+        expectDisplay("20% of 450 +", "90")
+        expectBadges("10 +", source: "Expression", target: "Result")
+        expectBadges("10kg *", source: "Expression", target: "Kilograms")
+        expectNil("+")
+        expectNil("10 + nonsense")
+        expectNil("10 + (")
+        expectNil("10 of")  // a stray English word is a search, not a partial expression
+
+        // A partial after a conversion echoes the typed text, and keeps the source radix / units
+        expectExpression("10km to mi *", "10km to mi ×")
+        expectDisplay("10km to mi *", "6.213711922 mi")
+        expectExpression("255 to hex +", "255 to hex +")
+        expectBadges("0xff -", source: "Hexadecimal", target: "Decimal")
+        expectDisplay("0xff -", "255")
+
+        // A conversion suffix applies to the complete unit expression
+        expectDisplay("(1kg + 500g) to lb", "3.306933933 lb")
+        expectDisplay("10kg + 500g to lb", "23.14853753 lb")
+        expectDisplay("(10lb + 5kg) to kg", "9.5359237 kg")
+        expectDisplay("(1m + 50cm) to ft", "4.921259843 ft")
+        expectBadges("(1kg + 500g) to lb", source: "Expression", target: "Pounds")
+        expectError("(1kg + 500g) to m", "Cannot convert Weight to Length.")
+
+        // Adjacent compatible quantities are additive, matching common composite-unit notation.
+        // Composite reads as one quantity in its leading unit; an explicit operator answers in the last.
+        expectDisplay("5 feet 3 inches to cm", "160.02 cm")
+        expectDisplay("5 feet 3 inches", "5.25 ft")
+        expectDisplay("1hr 30min", "1.5 hr")
+        expectDisplay("5feet + 1m", "2.524 m")
+        expectBadges("5feet + 1m", source: "Expression", target: "Meters")
+        expectDisplay("1kg + 500g + 2lb", "5.306933933 lb")  // chained: the last unit wins
+        expectDisplay("2 * 5kg", "10 kg")
+        expectDisplay("3 * 2m", "6 m")
+
+        // Affine temperatures only combine in the same unit; mixed absolute scales are ambiguous
+        expectDisplay("20 celsius + 10 celsius", "30 °C")
+        expectDisplay("68 fahrenheit - 32 fahrenheit", "36 °F")
+        expectError(
+            "20 celsius + 50 fahrenheit",
+            "Cannot combine temperatures with different units.")
+
+        // Clear dimensional mistakes are errors; incomplete or non-finite input stays silent
+        expectError("1kg + 1m", "Cannot add Weight and Length.")
+        expectError("1kg + 1hr", "Cannot add Weight and Time.")
+        // A bare number written against a quantity takes its unit
+        expectDisplay("1kg + 1", "2 kg")
+        expectDisplay("10kg + 5", "15 kg")
+        expectDisplay("5kg+5", "10 kg")
+        expectDisplay("5 + 10kg", "15 kg")
+        expectDisplay("$10 + 5", "15.00 USD")
+        expectBadges("5kg+5", source: "Expression", target: "Kilograms")
+        expectDisplay("10kg + -20%", "9.8 kg")  // unary minus drops percent, as in `450 + -20%`
+        // Adjacency is different: there a bare number is a unit still being typed, so it stays silent
+        expectNil("1hr 30")  // mid-way through "1hr 30min"
+        expectNil("5 feet 3")  // mid-way through "5 feet 3 inches"
+        expectError(
+            "1kg * 1m",
+            "Multiplication of two unit values is not supported.")
+        expectError("1 / 1kg", "Division by a unit value is not supported.")
+        expectNil("(2m)^2")
+        expectNil("sqrt(4kg)")
+        expectNil("1kg!")
+        expectDisplay("10kg +", "10 kg")
+        expectCopy("10kg +", "10 kg")
+        expectExpression("10kg +", "10 kg +")
+        expectBadges("10kg +", source: "Expression", target: "Kilograms")
+        expectNil("10kg + nonsense")
+        expectNil("10unknown + 5unknown")
+        expectNil("10kg / 0")
+        expectDisplay("1234kg + 1kg", "1,235 kg")
+        expectCopy("1234kg + 1kg", "1235 kg")
 
         // Date/time — evaluated against a fixed clock: Fri 2026-07-24 00:18 UTC
         expectDisplayAt("hrs till 9am", "8.7 hours")
@@ -287,6 +508,20 @@ struct CalcTests {
         expectDisplay("100 mbps to kbps", "100,000 Kbps")
         expectBadges("100 kmh to mph", source: "Kilometers per Hour", target: "Miles per Hour")
 
+        // Bare-unit auto-conversion coverage gaps: bar/psi/atm/Mbps/Gbps/Kbps had it, their
+        // neighbors didn't — same category, same treatment.
+        expectDisplay("5 mbar", "0.07251886887 psi")
+        expectDisplay("5 kPa", "0.7251886887 psi")
+        expectDisplay("5 hPa", "0.07251886887 psi")
+        expectDisplay("5 mmHg", "0.0966838873 psi")
+        expectDisplay("5 Torr", "0.09668387352 psi")
+        expectDisplay("100 bps", "0.1 Kbps")
+        expectDisplay("1 Tbps", "1,000 Gbps")
+
+        // Base conversion accepts an expression on the value side, like unit conversion already does
+        expectDisplay("2*128 to hex", "0x100")
+        expectDisplay("10*5 to hex", "0x32")
+
         // Percentage phrasings
         expectDisplay("20% off 500", "400")
         expectDisplay("50 as % of 200", "25%")
@@ -345,6 +580,8 @@ struct CalcTests {
         // Currency signs, prefixed and suffixed
         expectDisplay("€20 to GBP", "17.17 GBP")
         expectDisplay("20€ to GBP", "17.17 GBP")
+        expectDisplay("USD1K to EUR", "920.00 EUR")
+        expectDisplay("1kUSD to EUR", "920.00 EUR")
         expectDisplay("£50 in dollars", "63.29 USD")
         expectDisplay("$100 to yen", "15,700.00 JPY")
         // Sub-cent cross-rates widen instead of collapsing to 0.00
@@ -408,6 +645,41 @@ struct CalcTests {
         expectDisplay("1 cup to ml", "236.5882365 mL")
         expectDisplay("1 cup to tbsp", "16 tbsp")
 
+        // Currency expressions — still pure and deterministic against the injected rate table
+        expectDisplay("10$", "10.00 USD")
+        expectExpression("10$", "10 USD")
+        expectBadges("10$", source: "Expression", target: "US Dollar")
+        expectDisplay("$10 + $5", "15.00 USD")
+        expectDisplay("10$ + 5$", "15.00 USD")
+        expectDisplay("$10 + €5", "14.20 EUR")
+        expectDisplay("€5 + $10", "15.43 USD")
+        // Sign-first money echoes amount-first, like every other quantity
+        expectExpression("$10 + €5", "10 USD + 5 EUR")
+        expectExpression("10$ + 5€", "10 USD + 5 EUR")
+        expectDisplay("$10 * 2", "20.00 USD")
+        expectDisplay("$10 / 4", "2.50 USD")
+        expectDisplay("$10 / $2", "5")
+        expectDisplay("$100 * 3%", "3.00 USD")
+        expectDisplay("3% * $100", "3.00 USD")
+        expectDisplay("$100 / 25%", "400.00 USD")
+        expectDisplay("($100 * 3%) to eur", "2.76 EUR")
+        expectDisplay("($10 + $5) to eur", "13.80 EUR")
+        expectDisplay("$10 +", "10.00 USD")
+        expectBadges("$10 +", source: "Expression", target: "US Dollar")
+        // Juxtaposition multiplies on either side of the amount, same as an explicit "*"
+        expectDisplay("$5(2)", "10.00 USD")
+        expectDisplay("5(2)$", "10.00 USD")
+        expectDisplay("$5(2) to eur", "9.20 EUR")
+        expectNilWithoutConsent("$5(2)")
+        expectNilWithoutConsent("5(2)$")
+        expectError("$10 + 5kg", "Cannot add Currency and Weight.")
+        expectErrorWithoutRates(
+            "$10 + $5", "Exchange rates unavailable — check your connection.")
+        expectErrorWithoutRates(
+            "$100 * 3%", "Exchange rates unavailable — check your connection.")
+        expectErrorWithoutRates(
+            "10$", "Exchange rates unavailable — check your connection.")
+
         // Consent gate: without it the currency path doesn't exist. Not an error card explaining a
         // feature the user never enabled — no card at all, so the query falls through to app search.
         expectNilWithoutConsent("1 euro to dollars")
@@ -417,6 +689,13 @@ struct CalcTests {
         expectNilWithoutConsent("€20 to GBP")
         expectNilWithoutConsent("2*50 usd to cad")
         expectNilWithoutConsent("1 zloty to eur")
+        expectNilWithoutConsent("10$")
+        expectNilWithoutConsent("$10 + $5")
+        expectNilWithoutConsent("$10 + €5")
+        expectNilWithoutConsent("$100 * 3%")
+        expectNilWithoutConsent("$10 +")
+        expectNilWithoutConsent("($10 + $5) to eur")
+        expectNilWithoutConsent("$10 + 5kg")
         // Even the friendly category error stays silent — it would leak that currency exists.
         expectNilWithoutConsent("10 usd to kg")
         expectNilWithoutConsent("10 kg to usd")

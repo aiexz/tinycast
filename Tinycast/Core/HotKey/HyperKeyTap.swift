@@ -161,7 +161,7 @@ final class HyperKeyTap: ObservableObject {
                     queue: .main
                 ) { [weak self] _ in
                     MainActor.assumeIsolated { self?.sessionDidBecomeActive() }
-                }, center: center),
+                }, center: center)
         ]
     }
 

@@ -4,8 +4,8 @@ import SwiftUI
 struct CalculatorHistoryList: View {
     let results: [CalcHistoryEntry]
     let selectedID: CalcHistoryEntry.ID?
-    /// Changes only when the list should scroll to follow the selection (keyboard nav / reset), so mouse selection never yanks the scroll position.
-    let scrollToken: UUID
+    /// Changes only when the list should scroll (keyboard nav / reset), so mouse selection never yanks the scroll position.
+    let scroll: ScrollIntent
     /// Live answer for a calculation typed into the history search — same card and flat-index-0 contract as the launcher (`LauncherList.calc`).
     var calc: CalcResult?
     var calcSelected = false
@@ -28,6 +28,16 @@ struct CalculatorHistoryList: View {
             case .entry(let entry): return entry.id.uuidString
             }
         }
+    }
+
+    /// Scroll target for the current selection.
+    private var selectedRowID: String? {
+        calcSelected ? Self.calcRowID : selectedID?.uuidString
+    }
+
+    /// Whether the selection sits on flat index 0 — the calc card when present, else the first entry.
+    private var firstRowSelected: Bool {
+        calc != nil ? calcSelected : selectedID != nil && selectedID == results.first?.id
     }
 
     /// Entries are newest-first, so grouping walks and emits a date header whenever the bucket changes (same as the clipboard list); a live calculation pins above them.
@@ -79,14 +89,21 @@ struct CalculatorHistoryList: View {
                 .padding(.top, Theme.Spacing.xs)
                 .padding(.bottom, Theme.Spacing.md)
                 .hideNativeScrollers()
+                .scrollOriginAnchor()
             }
             .edgeDissolve()
             .thinScrollbar()
-            .onChange(of: scrollToken) {
-                if calcSelected {
-                    proxy.scrollTo(Self.calcRowID, anchor: .center)
-                } else if let selectedID {
-                    proxy.scrollTo(selectedID.uuidString, anchor: .center)
+            .onChange(of: scroll) { _, scroll in
+                switch scroll.kind {
+                case .top:
+                    proxy.scrollToOrigin()
+                case .follow:
+                    // On the first row, snap to the origin so its section header shows too — a nil anchor won't, since the row is already visible.
+                    if firstRowSelected {
+                        proxy.scrollToOrigin()
+                    } else if let selectedRowID {
+                        proxy.reveal(selectedRowID)
+                    }
                 }
             }
         }
@@ -139,8 +156,7 @@ private struct CalcHistoryRow: View {
 @MainActor
 enum CalcHistoryActionsMenu {
     static func content(entry: CalcHistoryEntry, core: AppCore, calcHistory: CalculatorHistoryStore)
-        -> PopoverMenuContent
-    {
+        -> PopoverMenuContent {
         PopoverMenuContent(
             header: entry.expression,
             items: [
@@ -159,7 +175,7 @@ enum CalcHistoryActionsMenu {
                     title: "Delete All Entries", systemImage: "trash.fill", isDestructive: true
                 ) {
                     calcHistory.clearAll()
-                },
+                }
             ]
         )
     }

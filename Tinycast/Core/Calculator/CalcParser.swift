@@ -2,6 +2,8 @@ import Foundation
 
 enum CalcToken: Equatable, Sendable {
     case number(Double)
+    /// A number written in shorthand (`10k` / `2.5K`, `1e5`), kept distinct so a lone one still earns a calculator card.
+    case compactNumber(Double)
     /// Radix-prefixed integer literal (0xff / 0b1010 / 0o777), kept exact for base conversion.
     case intLiteral(UInt64, radix: Int)
     /// Lowercased word (function, constant, unit, or connector); `²`/`³` fold to "2"/"3" so `m²` and `m2` match, while `°` is kept.
@@ -28,8 +30,7 @@ enum CalcTokenizer {
 
             // Radix literals: 0x… / 0b… / 0o… — needs ≥1 digit after the prefix, else fall through so "0" parses as a plain number.
             if ch == "0", i + 2 < chars.count,
-                let radix = ["x": 16, "b": 2, "o": 8][String(chars[i + 1]).lowercased()]
-            {
+                let radix = ["x": 16, "b": 2, "o": 8][String(chars[i + 1]).lowercased()] {
                 let start = i + 2
                 var end = start
                 while end < chars.count, chars[end].isHexDigit { end += 1 }
@@ -57,12 +58,49 @@ enum CalcTokenizer {
                     }
                     i += 1
                 }
-                guard let value = Double(text) else { return nil }
-                tokens.append(.number(value))
+                // Scientific notation, but only while the exponent hugs the mantissa — a spaced `2 e` stays 2 × e.
+                var isShorthand = false
+                if i < chars.count, chars[i] == "e" || chars[i] == "E" {
+                    var digits = i + 1
+                    if digits < chars.count, chars[digits] == "+" || chars[digits] == "-" {
+                        digits += 1
+                    }
+                    var end = digits
+                    while end < chars.count, isDigit(chars[end]) { end += 1 }
+                    if end > digits {
+                        text += String(chars[i..<end])
+                        i = end
+                        isShorthand = true
+                    }
+                }
+                // An overflowing literal ("1e400") isn't calculator input at all, so no card rather than a bogus one.
+                guard let value = Double(text), value.isFinite else { return nil }
+                // Attached `k` means ×1,000; whitespace keeps Kelvin explicit, and `10kg` remains a unit literal.
+                if i < chars.count, chars[i] == "k" || chars[i] == "K", isCompactSuffix(chars, i) {
+                    tokens.append(.compactNumber(value * 1_000))
+                    i += 1
+                } else if isShorthand {
+                    tokens.append(.compactNumber(value))
+                } else {
+                    tokens.append(.number(value))
+                }
                 continue
             }
 
             if ch.isLetter || ch == "°" {
+                // Split an attached currency prefix (`USD1K`) before the generic ident scanner absorbs its digits.
+                if ch.isLetter {
+                    var letterEnd = i
+                    while letterEnd < chars.count, chars[letterEnd].isLetter { letterEnd += 1 }
+                    if letterEnd < chars.count, isDigit(chars[letterEnd]) {
+                        let prefix = String(chars[i..<letterEnd]).lowercased()
+                        if CalcUnits.byName[prefix] == nil, CalcCurrency.byName[prefix] != nil {
+                            tokens.append(.ident(prefix))
+                            i = letterEnd
+                            continue
+                        }
+                    }
+                }
                 var text = ""
                 while i < chars.count {
                     let c = chars[i]
@@ -85,6 +123,13 @@ enum CalcTokenizer {
             if let code = CurrencyData.signs[ch] {
                 tokens.append(.ident(code))
                 i += 1
+                continue
+            }
+
+            // "**" is the Python/JS/shell spelling of power, same operator as "^".
+            if ch == "*", i + 1 < chars.count, chars[i + 1] == "*" {
+                tokens.append(.op("^"))
+                i += 2
                 continue
             }
 
@@ -116,6 +161,31 @@ enum CalcTokenizer {
         }
         return tokens
     }
+
+    /// Whether the `k` at `index` is a thousands suffix rather than Kelvin or the head of a unit: true at the end of the number, before a non-letter, or before a currency word (`1kUSD`) — never when an explicit temperature target follows (`273.15K to C`).
+    private static func isCompactSuffix(_ chars: [Character], _ index: Int) -> Bool {
+        let next = index + 1
+        guard next < chars.count else { return true }
+        if isTemperatureConversion(chars, from: next) { return false }
+        guard chars[next].isLetter else { return true }
+
+        var end = next
+        while end < chars.count, chars[end].isLetter { end += 1 }
+        return CalcCurrency.byName[String(chars[next..<end]).lowercased()] != nil
+    }
+
+    /// True when the remainder reads as a conversion into a temperature unit, which keeps `k` as Kelvin.
+    private static func isTemperatureConversion(_ chars: [Character], from index: Int) -> Bool {
+        let remainder = String(chars[index...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        for connector in ["to", "in", "->", "→"] where remainder.hasPrefix(connector) {
+            let target = remainder.dropFirst(connector.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if CalcUnits.byName[target]?.category == .temperature { return true }
+        }
+        return false
+    }
 }
 
 /// Precedence-climbing evaluator over the token stream (evaluates while parsing, no AST), returning nil for anything malformed or non-finite.
@@ -132,15 +202,22 @@ enum CalcParser {
     fileprivate static let functions: [String: @Sendable (Double) -> Double] = [
         "sqrt": { sqrt($0) }, "log": { log10($0) }, "ln": { log($0) }, "sin": { sin($0) },
         "cos": { cos($0) }, "tan": { tan($0) }, "abs": { abs($0) }, "floor": { floor($0) },
-        "ceil": { ceil($0) }, "round": { $0.rounded() },
-        // Reciprocals of the primary trig functions — `cot(45deg)` = 1/tan, `csc` = 1/sin, `sec` = 1/cos.
-        "cot": { 1 / tan($0) }, "csc": { 1 / sin($0) }, "sec": { 1 / cos($0) },
-        "asin": { asin($0) }, "acos": { acos($0) }, "atan": { atan($0) },
-        "sinh": { sinh($0) }, "cosh": { cosh($0) }, "tanh": { tanh($0) },
-        "asinh": { asinh($0) }, "acosh": { acosh($0) }, "atanh": { atanh($0) },
+        "ceil": { ceil($0) }, "round": { $0.rounded() }
     ]
 
     fileprivate static let constants: [String: Double] = ["pi": .pi, "π": .pi, "e": M_E]
+
+    /// Factorial for non-negative integers; 170! is the last value representable as a Double.
+    static func factorial(_ value: Double) -> Double? {
+        guard value >= 0, value.rounded() == value, value <= 170 else { return nil }
+        var result = 1.0
+        var next = 2.0
+        while next <= value {
+            result *= next
+            next += 1
+        }
+        return result
+    }
 }
 
 private struct Parser {
@@ -159,28 +236,61 @@ private struct Parser {
     var isAtEnd: Bool { pos == tokens.count }
     private var current: CalcToken? { pos < tokens.count ? tokens[pos] : nil }
 
-    // Binding powers: additive 10, multiplicative (incl. "of") 20, unary minus 25, power 30 (right-assoc), postfix ! % deg tightest.
+    // Binding powers: additive 10, multiplicative (incl. "of" and juxtaposition) 20, unary minus 25, power 30 (right-assoc), postfix ! % deg tightest.
     private static let unaryBP = 25
+    private static let mulBP = 20
 
     mutating func parseExpression(minBP: Int) -> Value? {
         guard var lhs = parseOperand() else { return nil }
-        while let (op, bp, rightBP) = peekBinary(), bp >= minBP {
-            pos += 1
-            guard let rhs = parseExpression(minBP: rightBP) else { return nil }
-            guard let combined = apply(op, lhs, rhs) else { return nil }
-            lhs = combined
+        while true {
+            if let binary = peekBinary(), binary.bindingPower >= minBP {
+                pos += 1
+                guard let rhs = parseExpression(minBP: binary.rightBindingPower) else { return nil }
+                guard let combined = apply(binary.op, lhs, rhs) else { return nil }
+                lhs = combined
+                continue
+            }
+            // Juxtaposition is the operator here, so there's no token to consume before the rhs.
+            if impliesMultiplication(), Self.mulBP >= minBP {
+                guard let rhs = parseExpression(minBP: Self.mulBP + 1) else { return nil }
+                guard let combined = apply("*", lhs, rhs) else { return nil }
+                lhs = combined
+                continue
+            }
+            break
         }
         return lhs
     }
 
-    /// (operator, its binding power, minimum bp for its right operand).
-    private func peekBinary() -> (Character, Int, Int)? {
+    /// Deliberately narrow — no unit or currency ident is a constant or function, so `10km` keeps its own path.
+    private func impliesMultiplication() -> Bool {
         switch current {
-        case .op(let op) where op == "+" || op == "-": return (op, 10, 11)
-        case .op(let op) where op == "*" || op == "/": return (op, 20, 21)
-        case .ident("of"): return ("*", 20, 21)
-        case .op("^"): return ("^", 30, 30)  // right-associative: 2^3^2 = 512
-        case .ident("power"): return ("^", 30, 30)  // `2 power 10` == 2^10, right-associative like `^`
+        case .op("("): return true
+        case .ident(let name): return CalcParser.constants[name] != nil || CalcParser.functions[name] != nil
+        default: return false
+        }
+    }
+
+    /// An operator, its binding power, and the minimum bp for its right operand.
+    struct BinaryOp {
+        let op: Character
+        let bindingPower: Int
+        let rightBindingPower: Int
+    }
+
+    private func peekBinary() -> BinaryOp? {
+        switch current {
+        case .op(let op) where op == "+" || op == "-":
+            return BinaryOp(op: op, bindingPower: 10, rightBindingPower: 11)
+        case .op(let op) where op == "*" || op == "/":
+            return BinaryOp(op: op, bindingPower: Self.mulBP, rightBindingPower: Self.mulBP + 1)
+        case .ident("of"):
+            return BinaryOp(op: "*", bindingPower: Self.mulBP, rightBindingPower: Self.mulBP + 1)
+        // Spelled-out only: "%" is already percent, and "20% - 5" gives no local signal to tell the two apart.
+        case .ident("mod"):
+            return BinaryOp(op: "%", bindingPower: Self.mulBP, rightBindingPower: Self.mulBP + 1)
+        case .op("^"):
+            return BinaryOp(op: "^", bindingPower: 30, rightBindingPower: 30)  // right-associative: 2^3^2 = 512
         default: return nil
         }
     }
@@ -199,6 +309,7 @@ private struct Parser {
                 ? lhs.effective * (1 - rhs.value / 100) : lhs.effective - rhs.effective
         case "*": result = lhs.effective * rhs.effective
         case "/": result = lhs.effective / rhs.effective
+        case "%": result = lhs.effective.truncatingRemainder(dividingBy: rhs.effective)
         case "^": result = pow(lhs.effective, rhs.effective)
         default: return nil
         }
@@ -211,7 +322,9 @@ private struct Parser {
         loop: while true {
             switch current {
             case .op("!"):
-                guard !value.isPercent, let fact = factorial(value.value) else { return nil }
+                guard !value.isPercent, let fact = CalcParser.factorial(value.value) else {
+                    return nil
+                }
                 value = Value(value: fact)
             case .op("%"):
                 guard !value.isPercent else { return nil }
@@ -230,6 +343,9 @@ private struct Parser {
     private mutating func parsePrefix() -> Value? {
         switch current {
         case .number(let n):
+            pos += 1
+            return Value(value: n)
+        case .compactNumber(let n):
             pos += 1
             return Value(value: n)
         case .intLiteral(let n, _):
@@ -271,17 +387,5 @@ private struct Parser {
         default:
             return nil
         }
-    }
-
-    /// Factorial for non-negative integers; 170! is the last value representable as a Double.
-    private func factorial(_ v: Double) -> Double? {
-        guard v >= 0, v.rounded() == v, v <= 170 else { return nil }
-        var result = 1.0
-        var n = 2.0
-        while n <= v {
-            result *= n
-            n += 1
-        }
-        return result
     }
 }

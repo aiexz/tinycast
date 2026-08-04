@@ -41,13 +41,15 @@ enum ImageThumbnail {
         pick(maxPixel).object(forKey: cacheKey(url, maxPixel))
     }
 
-    /// Decodes off the main thread and reads the result back from the thread-safe cache; the `NSImage` never crosses the actor boundary, keeping it clean under strict concurrency.
+    /// A freshly-decoded, thereafter-immutable `NSImage` is safe to move across the actor boundary.
+    private struct Decoded: @unchecked Sendable { let image: NSImage? }
+
+    /// Decodes off the main thread and returns the decode directly, not a cache re-read — a purge or eviction mid-decode must not strand a thumbnail on its placeholder.
     static func loadAsync(_ url: URL, maxPixel: CGFloat) async -> NSImage? {
         if let cached = cached(url, maxPixel: maxPixel) { return cached }
-        await Task.detached(priority: .userInitiated) {
-            _ = load(url, maxPixel: maxPixel)
-        }.value
-        return cached(url, maxPixel: maxPixel)
+        return await Task.detached(priority: .userInitiated) {
+            Decoded(image: load(url, maxPixel: maxPixel))
+        }.value.image
     }
 
     /// A thumbnail no larger than `maxPixel` on its longest edge, cached per (path, size); decodes synchronously, so call off the main thread for anything user-facing.
@@ -61,7 +63,7 @@ enum ImageThumbnail {
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: maxPixel,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixel
         ]
         guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
         else { return nil }

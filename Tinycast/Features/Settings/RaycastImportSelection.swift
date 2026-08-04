@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The category picker shared by the Settings and onboarding Raycast-import screens: a 3-column grid of checkboxes over one `RaycastImportOptions` bitset, plus a Select All / Deselect All link.
+/// The category picker shared by the Settings and onboarding Raycast-import screens: a 3-column grid of checkboxes over one `RaycastImportOptions` bitset, plus a Select All / Deselect All link. Categories the detected export can't carry are disabled rather than hidden, so the grid doesn't reflow when a file is chosen.
 struct RaycastImportSelection: View {
     @Binding var selection: RaycastImportOptions
+    var format: RaycastFormat?
 
     private struct Category: Identifiable {
         let option: RaycastImportOptions
@@ -18,12 +19,15 @@ struct RaycastImportSelection: View {
         .init(option: .launchAtLogin, symbol: "power", label: "Launch at login"),
         .init(option: .menuBarVisibility, symbol: "menubar.rectangle", label: "Menu-bar icon"),
         .init(option: .clipboardHistory, symbol: "doc.on.clipboard", label: "Clipboard history"),
+        .init(option: .snippets, symbol: "curlybraces", label: "Snippets"),
         .init(option: .popToRoot, symbol: "arrow.uturn.backward", label: "Pop to root"),
-        .init(option: .compactMode, symbol: "macwindow", label: "Compact mode"),
+        .init(option: .compactMode, symbol: "macwindow", label: "Compact mode")
     ]
 
     private static let columns = Array(
         repeating: GridItem(.flexible(), spacing: Theme.Spacing.md, alignment: .leading), count: 3)
+
+    private var available: RaycastImportOptions { format?.supportedOptions ?? .all }
 
     private func included(_ option: RaycastImportOptions) -> Binding<Bool> {
         Binding(
@@ -35,6 +39,7 @@ struct RaycastImportSelection: View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             LazyVGrid(columns: Self.columns, alignment: .leading, spacing: Theme.Spacing.sm) {
                 ForEach(Self.categories) { category in
+                    let supported = available.contains(category.option)
                     Toggle(isOn: included(category.option)) {
                         HStack(spacing: Theme.Spacing.sm) {
                             Image(systemName: category.symbol)
@@ -44,15 +49,19 @@ struct RaycastImportSelection: View {
                         }
                     }
                     .toggleStyle(.checkbox)
+                    .disabled(!supported)
+                    .help(supported ? "" : "This Raycast export doesn't include \(category.label).")
                 }
             }
-            Button(selection == .all ? "Deselect All" : "Select All") {
-                selection = selection == .all ? [] : .all
+            Button(selection == available ? "Deselect All" : "Select All") {
+                selection = selection == available ? [] : available
             }
             .buttonStyle(.link)
             .font(.caption)
         }
         .font(.callout)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Clearing unsupported bits keeps a box that was ticked before the file was chosen from importing nothing.
+        .onChange(of: available) { _, options in selection.formIntersection(options) }
     }
 }

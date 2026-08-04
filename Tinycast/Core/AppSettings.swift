@@ -47,12 +47,26 @@ final class AppSettings: ObservableObject {
         static let popToRootTimeout = "popToRootTimeout"
         static let compactMode = "compactMode"
         static let showFavoritesInCompactMode = "showFavoritesInCompactMode"
-        static let calendarEnabledIDs = "calendarEnabledIDs"
-        static let showMicrophoneMenuBar = SettingsKey.showMicrophoneMenuBar
-        static let showCoffeeMenuBar = SettingsKey.showCoffeeMenuBar
-        static let micHideIconWhenUnmuted = SettingsKey.micHideIconWhenUnmuted
-        static let coffeeHideWhenDecaffeinated = SettingsKey.coffeeHideWhenDecaffeinated
-        static let micMutedTintRed = SettingsKey.micMutedTintRed
+        static let searchScopes = "launcherSearchScopes"
+        static let openOnCursorScreen = "openOnCursorScreen"
+        static let customCommandsEnabled = "customCommandsEnabled"
+        static let customCommandsShowInLauncher = "customCommandsShowInLauncher"
+        static let snippetsEnabled = "snippetsEnabled"
+        static let snippetsShowInLauncher = "snippetsShowInLauncher"
+        static let windowManagementEnabled = "windowManagementEnabled"
+        static let windowManagementShowInLauncher = "windowManagementShowInLauncher"
+        static let windowGap = "windowManagementGap"
+        static let windowCycleOnRepeat = "windowManagementCycleOnRepeat"
+        static let quicklinksEnabled = "quicklinksEnabled"
+        static let quicklinksShowInLauncher = "quicklinksShowInLauncher"
+        static let quicklinkOpensNewWindow = "quicklinkOpensNewWindow"
+        static let quicklinkSelectionFallback = "quicklinkSelectionFallback"
+        static let quicklinkConfirmsBeforeDelete = "quicklinkConfirmsBeforeDelete"
+    }
+
+    /// Folders (and individual `.app` bundles) `AppIndex` scans, in scan order. Editing this re-indexes — `AppIndex.start(settings:)` observes it.
+    @Published var searchScopes: [String] {
+        didSet { defaults.set(searchScopes, forKey: Key.searchScopes) }
     }
 
     @Published var clipboardRetention: ClipboardRetention {
@@ -107,35 +121,80 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(showFavoritesInCompactMode, forKey: Key.showFavoritesInCompactMode) }
     }
 
-    /// Calendar identifiers shown by My Schedule. Empty means every calendar, so first use follows the native Calendar app without setup.
-    @Published var calendarEnabledIDs: [String] {
-        didSet { defaults.set(calendarEnabledIDs, forKey: Key.calendarEnabledIDs) }
+    /// Summon the palette on the display under the pointer instead of the one holding the menu bar.
+    @Published var openOnCursorScreen: Bool {
+        didSet { defaults.set(openOnCursorScreen, forKey: Key.openOnCursorScreen) }
     }
 
-    // MARK: - Menu-bar indicator preferences (Raycast-equivalent)
-
-    /// Show the microphone menu-bar indicator. Independent of the coffee indicator.
-    @Published var showMicrophoneMenuBar: Bool {
-        didSet { defaults.set(showMicrophoneMenuBar, forKey: Key.showMicrophoneMenuBar) }
+    // Feature switches, off out of the box: off means fully off — no launcher entries, no shortcuts, no keyword expansion, no store. `AppCore` observes all four and re-projects.
+    @Published var customCommandsEnabled: Bool {
+        didSet { defaults.set(customCommandsEnabled, forKey: Key.customCommandsEnabled) }
     }
 
-    /// Show the coffee menu-bar indicator. Independent of the microphone indicator.
-    @Published var showCoffeeMenuBar: Bool {
-        didSet { defaults.set(showCoffeeMenuBar, forKey: Key.showCoffeeMenuBar) }
+    /// With the feature on, controls only whether its launcher section appears.
+    @Published var customCommandsShowInLauncher: Bool {
+        didSet {
+            defaults.set(customCommandsShowInLauncher, forKey: Key.customCommandsShowInLauncher)
+        }
     }
 
-    /// Raycast mic preference: hide the icon when unmuted so the indicator only appears while muted.
-    @Published var micHideIconWhenUnmuted: Bool {
-        didSet { defaults.set(micHideIconWhenUnmuted, forKey: Key.micHideIconWhenUnmuted) }
+    /// Doubles as keyword-expansion consent, so it only flips on through `AppCore.setSnippetsEnabled`'s confirmation and never rides in a settings backup.
+    @Published var snippetsEnabled: Bool {
+        didSet { defaults.set(snippetsEnabled, forKey: Key.snippetsEnabled) }
     }
 
-    /// Raycast coffee preference: hide the icon when no caffeination is active (decaffeinated).
-    @Published var coffeeHideWhenDecaffeinated: Bool {
-        didSet { defaults.set(coffeeHideWhenDecaffeinated, forKey: Key.coffeeHideWhenDecaffeinated) }
+    @Published var snippetsShowInLauncher: Bool {
+        didSet { defaults.set(snippetsShowInLauncher, forKey: Key.snippetsShowInLauncher) }
     }
 
-    @Published var micMutedTintRed: Bool {
-        didSet { defaults.set(micMutedTintRed, forKey: Key.micMutedTintRed) }
+    /// Off means fully off: no launcher entries, and a still-registered shortcut moves nothing.
+    @Published var windowManagementEnabled: Bool {
+        didSet { defaults.set(windowManagementEnabled, forKey: Key.windowManagementEnabled) }
+    }
+
+    @Published var windowManagementShowInLauncher: Bool {
+        didSet {
+            defaults.set(windowManagementShowInLauncher, forKey: Key.windowManagementShowInLauncher)
+        }
+    }
+
+    /// Points left between tiled windows and around the screen edge. `WindowLayout` caps anything absurd.
+    @Published var windowGap: Int {
+        didSet { defaults.set(windowGap, forKey: Key.windowGap) }
+    }
+
+    /// Re-triggering a half steps it through ⅓ and ⅔ instead of re-applying the same frame.
+    @Published var windowCycleOnRepeat: Bool {
+        didSet { defaults.set(windowCycleOnRepeat, forKey: Key.windowCycleOnRepeat) }
+    }
+
+    /// Off means fully off: no launcher entries, no Quicklinks commands, and a still-registered
+    /// shortcut opens nothing.
+    @Published var quicklinksEnabled: Bool {
+        didSet { defaults.set(quicklinksEnabled, forKey: Key.quicklinksEnabled) }
+    }
+
+    @Published var quicklinksShowInLauncher: Bool {
+        didSet { defaults.set(quicklinksShowInLauncher, forKey: Key.quicklinksShowInLauncher) }
+    }
+
+    /// Ask the handler for a new window rather than reusing its frontmost tab. Off is the macOS
+    /// default, which is what "prefer existing tabs" means.
+    @Published var quicklinkOpensNewWindow: Bool {
+        didSet { defaults.set(quicklinkOpensNewWindow, forKey: Key.quicklinkOpensNewWindow) }
+    }
+
+    /// What `{selection}` does when there is no readable selection to pass.
+    @Published var quicklinkSelectionFallback: QuicklinkSelectionFallback {
+        didSet {
+            defaults.set(quicklinkSelectionFallback.rawValue, forKey: Key.quicklinkSelectionFallback)
+        }
+    }
+
+    @Published var quicklinkConfirmsBeforeDelete: Bool {
+        didSet {
+            defaults.set(quicklinkConfirmsBeforeDelete, forKey: Key.quicklinkConfirmsBeforeDelete)
+        }
     }
 
     init() {
@@ -170,17 +229,37 @@ final class AppSettings: ObservableObject {
         showFavoritesInCompactMode =
             defaults.object(forKey: Key.showFavoritesInCompactMode) == nil
             || defaults.bool(forKey: Key.showFavoritesInCompactMode)
-        calendarEnabledIDs = defaults.stringArray(forKey: Key.calendarEnabledIDs) ?? []
-        // Visibility toggles default to true; absence must be distinguished from a stored `false`.
-        showMicrophoneMenuBar =
-            defaults.object(forKey: Key.showMicrophoneMenuBar) == nil
-            || defaults.bool(forKey: Key.showMicrophoneMenuBar)
-        showCoffeeMenuBar =
-            defaults.object(forKey: Key.showCoffeeMenuBar) == nil
-            || defaults.bool(forKey: Key.showCoffeeMenuBar)
-        // Raycast hide-when preferences default to false; a plain `bool(forKey:)` read already does the right thing.
-        micHideIconWhenUnmuted = defaults.bool(forKey: Key.micHideIconWhenUnmuted)
-        coffeeHideWhenDecaffeinated = defaults.bool(forKey: Key.coffeeHideWhenDecaffeinated)
-        micMutedTintRed = defaults.object(forKey: Key.micMutedTintRed) == nil || defaults.bool(forKey: Key.micMutedTintRed)
+        // An unset key means "never configured" and seeds the defaults; a stored empty array is a user who deliberately cleared the list.
+        searchScopes = defaults.stringArray(forKey: Key.searchScopes) ?? SearchScopes.defaults
+        openOnCursorScreen =
+            defaults.object(forKey: Key.openOnCursorScreen) == nil
+            || defaults.bool(forKey: Key.openOnCursorScreen)
+        // The enable switches ship off; the launcher toggles default to true, so absence must be distinguished from a stored `false`.
+        customCommandsEnabled = defaults.bool(forKey: Key.customCommandsEnabled)
+        customCommandsShowInLauncher =
+            defaults.object(forKey: Key.customCommandsShowInLauncher) == nil
+            || defaults.bool(forKey: Key.customCommandsShowInLauncher)
+        snippetsEnabled = defaults.bool(forKey: Key.snippetsEnabled)
+        snippetsShowInLauncher =
+            defaults.object(forKey: Key.snippetsShowInLauncher) == nil
+            || defaults.bool(forKey: Key.snippetsShowInLauncher)
+        windowManagementEnabled = defaults.bool(forKey: Key.windowManagementEnabled)
+        windowManagementShowInLauncher =
+            defaults.object(forKey: Key.windowManagementShowInLauncher) == nil
+            || defaults.bool(forKey: Key.windowManagementShowInLauncher)
+        // Unset reads as 0, which is the intended default anyway — no gap.
+        windowGap = defaults.integer(forKey: Key.windowGap)
+        windowCycleOnRepeat = defaults.bool(forKey: Key.windowCycleOnRepeat)
+        quicklinksEnabled = defaults.bool(forKey: Key.quicklinksEnabled)
+        quicklinksShowInLauncher =
+            defaults.object(forKey: Key.quicklinksShowInLauncher) == nil
+            || defaults.bool(forKey: Key.quicklinksShowInLauncher)
+        quicklinkOpensNewWindow = defaults.bool(forKey: Key.quicklinkOpensNewWindow)
+        quicklinkSelectionFallback =
+            defaults.string(forKey: Key.quicklinkSelectionFallback)
+            .flatMap(QuicklinkSelectionFallback.init) ?? .ask
+        quicklinkConfirmsBeforeDelete =
+            defaults.object(forKey: Key.quicklinkConfirmsBeforeDelete) == nil
+            || defaults.bool(forKey: Key.quicklinkConfirmsBeforeDelete)
     }
 }

@@ -10,7 +10,7 @@ enum CalcQuantity {
         if split.targetName != nil, isSimpleConversionSource(split.expressionTokens) {
             return nil
         }
-        if split.targetName == nil, isSimpleConversionSource(split.expressionTokens) { return nil }
+
 
         var parser = QuantityParser(tokens: split.expressionTokens, currency: currency)
         guard let value = parser.parse() else {
@@ -23,12 +23,12 @@ enum CalcQuantity {
             switch currency {
             case .off:
                 return nil
-            case .on(nil, _):
+            case .on(nil):
                 return CalcResult(
                     expression: query,
                     payload: .error(
                         message: "Exchange rates unavailable — check your connection."))
-            case .on(let rates?, _):
+            case .on(let rates?):
                 if let code = parser.currencyCodes.first(where: { rates.rate(for: $0) == nil }) {
                     return CalcResult(
                         expression: query,
@@ -53,15 +53,23 @@ enum CalcQuantity {
                     display: CalcFormatter.display(value.effective),
                     copyText: CalcFormatter.copyText(value.effective)))
         case .unit(let unit):
-            // A standalone typed value belongs to bare auto-conversion; operators keep the written unit.
-            if !preserveStandaloneUnit, parser.operationCount == 0 { return nil }
+            // A bare `50cm` belongs to the auto-conversion path below; once an operator is involved the
+            // answer stays in the units the user wrote, so `2 * 5kg` is `10 kg`, not `22.05 lb`.
+            if !preserveStandaloneUnit, parser.operationCount == 0, parser.dimensionCount == 1,
+                case .ident(let finalName)? = split.expressionTokens.last,
+                CalcUnits.byName[finalName] != nil {
+                return nil
+            }
+            guard parser.operationCount > 0 || preserveStandaloneUnit else { return nil }
             return measurementResult(
                 value.amount, unit: unit, expression: expressionText(split.expressionTokens))
         case .currency(let definition):
-            if parser.operationCount == 0 { return nil }
             return currencyResult(
                 value.amount, definition: definition,
-                expression: expressionText(split.expressionTokens))
+                expression:
+                    parser.operationCount == 0
+                    ? "\(CalcFormatter.display(value.amount)) \(definition.code)"
+                    : expressionText(split.expressionTokens))
         }
     }
 
@@ -89,7 +97,7 @@ enum CalcQuantity {
             }
             return nil
         case .currency(let from):
-            if case .on(let rates, _) = currency, let to = CalcCurrency.byName[targetName] {
+            if case .on(let rates) = currency, let to = CalcCurrency.byName[targetName] {
                 guard let rates else {
                     return CalcResult(
                         expression: query,
@@ -173,7 +181,8 @@ enum CalcQuantity {
             if case .ident = tokens[0] { return true }
         case 2:
             switch (tokens[0], tokens[1]) {
-            case (.number, .ident), (.ident, .number):
+            case (.number, .ident), (.compactNumber, .ident),
+                (.ident, .number), (.ident, .compactNumber):
                 return true
             default:
                 break
@@ -204,8 +213,7 @@ enum CalcQuantity {
             // Money is written sign-first (`$10`), so echo the amount ahead of its code like every other quantity.
             if case .ident(let name) = tokens[index], CalcUnits.byName[name] == nil,
                 let definition = CalcCurrency.byName[name], index + 1 < tokens.count,
-                let amount = numberValue(tokens[index + 1])
-            {
+                let amount = numberValue(tokens[index + 1]) {
                 add(CalcFormatter.copyText(amount))
                 add(definition.code)
                 index += 2
@@ -213,7 +221,7 @@ enum CalcQuantity {
             }
 
             switch tokens[index] {
-            case .number(let value):
+            case .number(let value), .compactNumber(let value):
                 add(CalcFormatter.copyText(value))
             case .intLiteral(let value, _):
                 add(String(value))
@@ -254,7 +262,7 @@ enum CalcQuantity {
 
     fileprivate static func numberValue(_ token: CalcToken) -> Double? {
         switch token {
-        case .number(let value):
+        case .number(let value), .compactNumber(let value):
             return value
         default:
             return nil
@@ -321,21 +329,31 @@ private struct QuantityParser {
         return left
     }
 
-    private func peekBinary(
-        left: QuantityValue
-    ) -> (op: Character, bindingPower: Int, rightBindingPower: Int, consumesToken: Bool)? {
+    /// An operator, its binding power, the minimum bp for its right operand, and whether it has a token to consume.
+    struct BinaryOp {
+        let op: Character
+        let bindingPower: Int
+        let rightBindingPower: Int
+        let consumesToken: Bool
+    }
+
+    private func peekBinary(left: QuantityValue) -> BinaryOp? {
         switch current {
         case .op(let op) where op == "+" || op == "-":
-            return (op, 10, 11, true)
+            return BinaryOp(op: op, bindingPower: 10, rightBindingPower: 11, consumesToken: true)
         case .op(let op) where op == "*" || op == "/":
-            return (op, 20, 21, true)
+            return BinaryOp(op: op, bindingPower: 20, rightBindingPower: 21, consumesToken: true)
         case .ident("of"):
-            return ("*", 20, 21, true)
+            return BinaryOp(op: "*", bindingPower: 20, rightBindingPower: 21, consumesToken: true)
         case .op("^"):
-            return ("^", 30, 30, true)
+            return BinaryOp(op: "^", bindingPower: 30, rightBindingPower: 30, consumesToken: true)
         default:
+            // Juxtaposition against a bracket multiplies (`$5(2)`, `5(2)$`), matching the scalar parser.
+            if case .op("(") = current {
+                return BinaryOp(op: "*", bindingPower: 20, rightBindingPower: 21, consumesToken: false)
+            }
             if !isScalar(left.kind), startsQuantity(current) {
-                return ("+", 10, 11, false)
+                return BinaryOp(op: "+", bindingPower: 10, rightBindingPower: 11, consumesToken: false)
             }
             return nil
         }
@@ -479,13 +497,6 @@ private struct QuantityParser {
         return output.isFinite ? QuantityValue(amount: output, kind: kind) : nil
     }
 
-    private func factorial(_ value: Double) -> Double? {
-        guard value >= 0, value.rounded() == value, value <= 170 else { return nil }
-        var result = 1.0
-        if value >= 2 { for next in 2...Int(value) { result *= Double(next) } }
-        return result
-    }
-
     private mutating func parseOperand() -> QuantityValue? {
         guard var value = parsePrefix() else { return nil }
         while true {
@@ -503,7 +514,7 @@ private struct QuantityParser {
                 position += 1
             case .op("!"):
                 guard isScalar(value.kind), !value.isPercent,
-                    let factorial = factorial(value.amount)
+                    let factorial = CalcParser.factorial(value.amount)
                 else { return nil }
                 value.amount = factorial
                 position += 1
@@ -515,7 +526,7 @@ private struct QuantityParser {
 
     private mutating func parsePrefix() -> QuantityValue? {
         switch current {
-        case .number(let value):
+        case .number(let value), .compactNumber(let value):
             position += 1
             return QuantityValue(amount: value, kind: .scalar)
         case .intLiteral(let value, _):
@@ -551,7 +562,7 @@ private struct QuantityParser {
     }
 
     private mutating func dimension(named name: String) -> QuantityValue.Kind? {
-        if ["c", "f", "k"].contains(name) { return nil }
+
         if let unit = CalcUnits.byName[name] {
             return .unit(unit)
         }
@@ -565,7 +576,7 @@ private struct QuantityParser {
     ) -> Double? {
         recordCurrency(from.code)
         recordCurrency(to.code)
-        guard case .on(let rates, _) = currency else { return nil }
+        guard case .on(let rates) = currency else { return nil }
         guard let rates else {
             issue = "Exchange rates unavailable — check your connection."
             return nil
@@ -593,7 +604,7 @@ private struct QuantityParser {
 
     private func startsQuantity(_ token: CalcToken?) -> Bool {
         switch token {
-        case .number, .intLiteral:
+        case .number, .compactNumber, .intLiteral:
             return true
         case .ident(let name):
             return currencyEnabled && CalcUnits.byName[name] == nil

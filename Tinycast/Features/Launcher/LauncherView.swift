@@ -9,15 +9,15 @@ struct LauncherList: View {
     /// Zero unless `showSections`, so the flat (typed-query) layout stays plain.
     let rankedCount: Int
     let showSections: Bool
-    /// Changes only when the list should scroll to follow the selection (keyboard nav / reset), so mouse selection never yanks the scroll position.
-    let scrollToken: UUID
+    /// Changes only when the list should scroll (keyboard nav / reset), so mouse selection never yanks the scroll position.
+    let scroll: ScrollIntent
     /// Inline calculator answer; occupies flat selection index 0 when present (requires a non-empty query, so it never coexists with the sectioned view).
     var calc: CalcResult?
     var calcSelected = false
     var onActivateCalc: () -> Void = {}
     var onCalcActions: () -> Void = {}
+    let onActivate: (AppEntry) -> Void
     let onActions: (AppEntry) -> Void
-    @EnvironmentObject private var core: AppCore
     @EnvironmentObject private var runningApps: RunningAppsMonitor
 
     private nonisolated static let calcRowID = "calc-card"
@@ -35,6 +35,14 @@ struct LauncherList: View {
         }
     }
 
+    /// Scroll target for the current selection.
+    private var selectedRowID: String? { calcSelected ? Self.calcRowID : selectedID }
+
+    /// Whether the selection sits on flat index 0 — the calc card when present, else the first result.
+    private var firstRowSelected: Bool {
+        calc != nil ? calcSelected : selectedID != nil && selectedID == results.first?.id
+    }
+
     private var rows: [Row] {
         var calcRows: [Row] = []
         if let calc { calcRows = [.header("Calculator"), .calc(calc)] }
@@ -44,21 +52,23 @@ struct LauncherList: View {
         }
         var rows: [Row] = calcRows
         let favorites = results.prefix(favoriteCount)
-        // Ranked band sits between Favorites and the rest; mixed apps + commands, so it gets its
-        // own section rather than splitting by kind like the alphabetical groups below.
-        let rankedStart = favoriteCount
-        let rankedEnd = favoriteCount + rankedCount
-        let ranked = results[rankedStart..<rankedEnd]
-        let rest = results.dropFirst(rankedEnd)
-        // `rest` is apps-then-panes-then-commands by the AppIndex sort invariant, so filtering by kind keeps row order identical and the flat selection index valid.
-        let apps = rest.filter { $0.kind == .application }
-        let panes = rest.filter { $0.kind == .systemSettings }
-        let commands = rest.filter { $0.kind == .command }
-        for (title, group) in [
-            ("Favorites", Array(favorites)), ("Frequently Used", Array(ranked)),
-            ("Applications", apps), ("System Settings", panes), ("Commands", commands),
+        let rest = results.dropFirst(favoriteCount)
+        // `rest` is apps, panes, quicklinks, snippets, system actions, window commands, custom
+        // commands, then built-in commands by the AppIndex sort invariant, so filtering by kind
+        // keeps row order identical and the flat selection index valid.
+        // Annotated: with this many sections the inference pass times out.
+        let sections: [(String, [AppEntry])] = [
+            ("Favorites", Array(favorites)),
+            ("Applications", rest.filter { $0.kind == .application }),
+            ("System Settings", rest.filter { $0.kind == .systemSettings }),
+            ("Quicklinks", rest.filter { $0.kind == .quicklink }),
+            ("Snippets", rest.filter { $0.kind == .snippet }),
+            ("System Actions", rest.filter { $0.kind == .systemAction }),
+            ("Window Management", rest.filter { $0.kind == .windowCommand }),
+            ("Custom Commands", rest.filter { $0.kind == .customCommand }),
+            ("Commands", rest.filter { $0.kind == .command })
         ]
-        where !group.isEmpty {
+        for (title, group) in sections where !group.isEmpty {
             rows.append(.header(title))
             rows.append(contentsOf: group.map(Row.app))
         }
@@ -91,7 +101,7 @@ struct LauncherList: View {
                                         running: runningApps.isRunning(app)
                                     )
                                     .contentShape(Rectangle())
-                                    .onTapGesture { core.launch(app) }
+                                    .onTapGesture { onActivate(app) }
                                     .onRightClick { onActions(app) }
                                 }
                             }
@@ -100,14 +110,21 @@ struct LauncherList: View {
                         .padding(.top, Theme.Spacing.xs)
                         .padding(.bottom, Theme.Spacing.md)
                         .hideNativeScrollers()
+                        .scrollOriginAnchor()
                     }
                     .edgeDissolve()
                     .thinScrollbar()
-                    .onChange(of: scrollToken) {
-                        if calcSelected {
-                            proxy.scrollTo(Self.calcRowID, anchor: .center)
-                        } else if let selectedID {
-                            proxy.scrollTo(selectedID, anchor: .center)
+                    .onChange(of: scroll) { _, scroll in
+                        switch scroll.kind {
+                        case .top:
+                            proxy.scrollToOrigin()
+                        case .follow:
+                            // On the first row, snap to the origin so its section header shows too — a nil anchor won't, since the row is already visible.
+                            if firstRowSelected {
+                                proxy.scrollToOrigin()
+                            } else if let selectedRowID {
+                                proxy.reveal(selectedRowID)
+                            }
                         }
                     }
                 }
@@ -153,10 +170,8 @@ private struct AppRow: View {
 
     /// Keycaps for this entry's hotkey, or `nil` if none is bound.
     private var shortcutCaps: [String]? {
-        guard let action = app.hotKeyAction,
-            let shortcut = hotKeys.shortcut(for: action)
-        else { return nil }
-        return shortcut.keycaps
+        guard let action = app.hotKeyAction else { return nil }
+        return hotKeys.binding(for: action)?.keycaps
     }
 
     /// `kindLabel` for ordinary rows; live `Caffeinated`/`Decaffeinated` for the Toggle Caffeination row, observed from the controller so it updates when mode flips.
@@ -240,13 +255,14 @@ struct AppIconView: View {
 /// Actions menu content for a launcher app, shown bottom-right on right-click or from the Actions pill.
 @MainActor
 enum AppActionsMenu {
-    static func content(app: AppEntry, core: AppCore, favorites: FavoritesStore, running: Bool)
-        -> PopoverMenuContent
-    {
+    static func content(
+        app: AppEntry, searchQuery: String, core: AppCore, favorites: FavoritesStore,
+        running: Bool, onResetRanking: @escaping () -> Void
+    ) -> PopoverMenuContent {
         var items: [PopoverMenuItem] = [
             PopoverMenuItem(
                 title: openTitle(app), systemImage: "list.bullet.rectangle", shortcut: "↵"
-            ) { core.launch(app) }
+            ) { core.launch(app, searchQuery: searchQuery) }
         ]
         if favorites.isFavorite(app) {
             items.append(
@@ -259,19 +275,35 @@ enum AppActionsMenu {
                     favorites.toggle(app)
                 })
         }
-        if app.kind != .command {
+        if core.launcherRanking.hasRanking(for: app.preferenceKey) {
             items.append(
-                PopoverMenuItem(title: "Show in Finder", systemImage: "folder") {
+                PopoverMenuItem(title: "Reset Ranking", systemImage: "arrow.counterclockwise") {
+                    onResetRanking()
+                })
+        }
+        if app.canRevealInFinder {
+            items.append(
+                PopoverMenuItem(
+                    title: "Show in Finder", systemImage: "folder", shortcut: "⌘↵"
+                ) {
                     core.showInFinder(app)
                 })
         }
         if running, app.kind == .application {
             items.append(
                 PopoverMenuItem(
-                    title: "Quit Application", systemImage: "power", shortcut: "⌘↵",
+                    title: "Quit Application", systemImage: "power", shortcut: "⌃⇧Q",
                     isDestructive: true
                 ) {
                     core.quit(app)
+                })
+        }
+        if app.kind == .application {
+            items.append(
+                PopoverMenuItem(
+                    title: "Uninstall Application", systemImage: "trash", isDestructive: true
+                ) {
+                    core.beginUninstall(app)
                 })
         }
         return PopoverMenuContent(header: app.name, items: items)
@@ -281,7 +313,12 @@ enum AppActionsMenu {
         switch app.kind {
         case .application: return "Open Application"
         case .systemSettings: return "Open System Setting"
-        case .command: return "Open Command"
+        case .command: return "Run Command"
+        case .customCommand: return "Run Custom Command"
+        case .snippet: return "Paste Snippet"
+        case .systemAction: return "Run System Action"
+        case .windowCommand: return "Move Window"
+        case .quicklink: return "Open Quicklink"
         }
     }
 }

@@ -24,7 +24,8 @@ enum Gunzip {
         if flags & 0x10 != 0 { index = try skipCString(bytes, from: index) }  // FCOMMENT
         if flags & 0x02 != 0 { index += 2 }  // FHCRC
         guard index < bytes.count - 8 else { throw GunzipError.corrupt }
-        return try rawInflate(data.subdata(in: index..<(bytes.count - 8)), maxOutput: maxOutput)
+        // Slice `bytes`, not `data`: `index` is relative to that zero-based copy, while `data` may be a slice whose own indices start elsewhere (`subdata(in:)` would then read out of bounds and trap).
+        return try rawInflate(Data(bytes[index..<(bytes.count - 8)]), maxOutput: maxOutput)
     }
 
     private static func skipCString(_ bytes: [UInt8], from start: Int) throws -> Int {

@@ -6,6 +6,8 @@ import SwiftUI
 final class PalettePanel: NSPanel {
     /// Called for a bare backspace before it reaches the field editor (return true to consume); the field editor swallows plain backspace itself, so SwiftUI `onKeyPress` up the hierarchy never sees it.
     var onBareBackspace: (() -> Bool)?
+    /// Called for command-key chords before they reach the field editor; return true to consume the event. The field editor swallows some `⌘` chords (e.g. `⌘,`) before SwiftUI `.onKeyPress` can see them, and `LSUIElement` apps have no main menu to handle standard window equivalents like `⌘W`.
+    var onCommandShortcut: ((NSEvent) -> Bool)?
     /// Arms the hover highlight from `sendEvent` — the one place both event streams pass through, so a keyboard-driven scroll under a still pointer never fires `.mouseMoved` and hover stays disarmed. Also carries the caret-hide hook fired when a footer menu opens.
     weak var paletteViewModel: PaletteViewModel? {
         didSet {
@@ -16,7 +18,7 @@ final class PalettePanel: NSPanel {
     /// Keys that drive an open menu (navigate/activate/dismiss); they must reach SwiftUI's `onKeyPress` even while the menu freezes text editing.
     private static let menuNavKeys: Set<Int> = [
         kVK_UpArrow, kVK_DownArrow, kVK_LeftArrow, kVK_RightArrow,
-        kVK_Return, kVK_ANSI_KeypadEnter, kVK_Escape, kVK_Tab,
+        kVK_Return, kVK_ANSI_KeypadEnter, kVK_Escape, kVK_Tab
     ]
 
     /// Hide/show the caret on SwiftUI's *own* live field editor (the current first responder) without replacing it — SwiftUI force-casts the field editor to a private subclass, so vending our own crashes; we can only tune the existing one. The field never resigns first responder, so its text/placeholder never reflows.
@@ -36,15 +38,20 @@ final class PalettePanel: NSPanel {
         // A footer menu owns the keyboard: the search field stays first responder (no focus swap, so nothing reflows) with only its caret hidden; swallow text-editing keystrokes before the field editor consumes them, but let shortcut chords (⌘K, ⌘⌫) and menu-nav keys reach SwiftUI's onKeyPress.
         if event.type == .keyDown,
             paletteViewModel?.menuOpen == true,
-            event.modifierFlags.intersection([.command, .control]).isEmpty,
-            !Self.menuNavKeys.contains(Int(event.keyCode))
-        {
+            event.modifierFlags.isDisjoint(with: [.command, .control]),
+            !Self.menuNavKeys.contains(Int(event.keyCode)) {
             return
         }
         if event.type == .keyDown,
             Int(event.keyCode) == kVK_Delete,
-            event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
-            onBareBackspace?() == true
+            event.modifierFlags.isDisjoint(with: [.command, .option, .control, .shift]),
+            onBareBackspace?() == true {
+            return
+        }
+        // The field editor swallows some command chords (e.g. `⌘,`) before SwiftUI `.onKeyPress` can fire, and `LSUIElement` apps have no main menu for standard equivalents like `⌘W`. Let the controller own those so the rest still reach SwiftUI.
+        if event.type == .keyDown,
+            event.modifierFlags.contains(.command),
+            onCommandShortcut?(event) == true
         {
             return
         }

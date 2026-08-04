@@ -1,6 +1,7 @@
-import AppKit
+import Foundation
 import SQLite3
 
+// Spelled as the C macro in sqlite3.h, which isn't imported into Swift.
 private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
 
 struct ClipboardItem: Identifiable, Hashable, Sendable {
@@ -14,6 +15,10 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
     let createdAt: Date
     /// Bundle ID of the app frontmost when the copy was captured (see `ClipboardManager.poll`).
     let sourceBundleID: String?
+    /// When the entry was pinned. Pinned entries lead the list in their own section, in pin order, and are exempt from retention pruning.
+    let pinnedAt: Date?
+
+    var isPinned: Bool { pinnedAt != nil }
 
     init(text: String, sourceBundleID: String?) {
         self.init(
@@ -29,7 +34,7 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
 
     init(
         id: UUID, kind: Kind, text: String?, imagePath: String?, createdAt: Date,
-        sourceBundleID: String?
+        sourceBundleID: String?, pinnedAt: Date? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -37,6 +42,20 @@ struct ClipboardItem: Identifiable, Hashable, Sendable {
         self.imagePath = imagePath
         self.createdAt = createdAt
         self.sourceBundleID = sourceBundleID
+        self.pinnedAt = pinnedAt
+    }
+
+    /// Copy with the two fields the store rewrites in place; the pin is stated outright because every rewrite either stamps it or drops the row back into the history.
+    func with(createdAt: Date? = nil, pinnedAt: Date?) -> ClipboardItem {
+        ClipboardItem(
+            id: id, kind: kind, text: text, imagePath: imagePath,
+            createdAt: createdAt ?? self.createdAt, sourceBundleID: sourceBundleID,
+            pinnedAt: pinnedAt)
+    }
+
+    /// Case-insensitive substring match — how the store filters without FTS: short queries, the no-database path, and the pinned block.
+    func matches(_ query: String) -> Bool {
+        text?.localizedCaseInsensitiveContains(query) ?? false
     }
 }
 
@@ -72,13 +91,19 @@ enum ClipboardRetention: Int, CaseIterable, Identifiable, Sendable {
 /// SQLite-backed clipboard history (rows + trigram FTS5 index in `clipboard.sqlite3`, image blobs on disk), degrading to session-only in-memory history if the database can't be opened.
 @MainActor
 final class ClipboardStore: ObservableObject {
+    /// Newest-first, pins included in place — `search` is the one place that lifts them to the head. Every pinned row is resident however old it is (`load` fetches them all; neither `trimWindow` nor `prune` drops one), which is what lets `search` match the pinned block in memory.
     @Published private(set) var items: [ClipboardItem] = [] {
-        didSet { searchCache = nil }
+        didSet {
+            searchCache = nil
+            orderedCache = nil
+        }
     }
     var maxAge: TimeInterval = ClipboardRetention.threeMonths.maxAge
 
     /// One-entry memo so repeated renders (e.g. arrow-key nav) for the same query reuse the FTS result instead of re-querying SQLite every frame; invalidated whenever `items` changes.
     private var searchCache: (query: String, result: [ClipboardItem])?
+    /// Same memo for the empty query — every render reads the full display order, so the pinned/unpinned split runs once per mutation.
+    private var orderedCache: [ClipboardItem]?
 
     private static let memoryWindow = 1000
 
@@ -89,7 +114,8 @@ final class ClipboardStore: ObservableObject {
           text TEXT,
           image_path TEXT,
           created_at REAL NOT NULL,
-          source_app TEXT
+          source_app TEXT,
+          pinned_at REAL
         );
         CREATE INDEX IF NOT EXISTS items_created_at ON items(created_at);
         CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
@@ -108,17 +134,16 @@ final class ClipboardStore: ObservableObject {
     private var db: OpaquePointer?
     private var insertStmt: OpaquePointer?
     private var loadStmt: OpaquePointer?
+    private var windowFloorStmt: OpaquePointer?
     private var searchStmt: OpaquePointer?
     private var deleteByIDStmt: OpaquePointer?
+    private var pinStmt: OpaquePointer?
     private var staleImagesStmt: OpaquePointer?
     private var deleteStaleStmt: OpaquePointer?
 
-    init() {
-        // Stored under ~/Library/Caches/<bundle-id> since clipboard history is regenerable; "Clear History" is the durable control.
-        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
-        let base = FileManager.default
-            .urls(for: .cachesDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent(bundleID, isDirectory: true)
+    /// `directory` defaults to the per-channel cache; `Tools/clipboard-test.swift` passes a throwaway one so a harness run can never reach a real history.
+    init(directory: URL? = nil) {
+        let base = directory ?? Self.defaultDirectory
         imagesDir = base.appendingPathComponent("images", isDirectory: true)
         dbURL = base.appendingPathComponent("clipboard.sqlite3")
         try? FileManager.default.createDirectory(at: imagesDir, withIntermediateDirectories: true)
@@ -132,6 +157,14 @@ final class ClipboardStore: ObservableObject {
         }
     }
 
+    /// Under ~/Library/Caches/<bundle-id> since clipboard history is regenerable; "Clear History" is the durable control.
+    private static var defaultDirectory: URL {
+        let bundleID = Bundle.main.bundleIdentifier ?? "com.tinycast.app"
+        return FileManager.default
+            .urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent(bundleID, isDirectory: true)
+    }
+
     // Isolated so teardown may touch the main-actor statement/db pointers; AppCore only ever releases the store on the main actor, so no hop.
     isolated deinit {
         closeDatabase()
@@ -139,7 +172,7 @@ final class ClipboardStore: ObservableObject {
 
     func load() {
         guard let stmt = loadStmt else { return }
-        sqlite3_bind_int(stmt, 1, Int32(Self.memoryWindow))
+        sqlite3_bind_int64(stmt, 1, windowFloor())
         var loaded: [ClipboardItem] = []
         while sqlite3_step(stmt) == SQLITE_ROW {
             if let item = Self.row(stmt) { loaded.append(item) }
@@ -154,6 +187,17 @@ final class ClipboardStore: ObservableObject {
     /// Called on load and when the retention setting changes.
     func enforceLimits() {
         prune()
+    }
+
+    /// Rowid of the oldest unpinned row the in-memory window keeps — the floor `loadStmt` reads from. 0 (no floor, load everything) when the history is shorter than the window.
+    private func windowFloor() -> sqlite3_int64 {
+        guard let stmt = windowFloorStmt else { return 0 }
+        defer {
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+        }
+        sqlite3_bind_int(stmt, 1, Int32(Self.memoryWindow - 1))
+        return sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int64(stmt, 0) : 0
     }
 
     func addText(_ text: String, sourceBundleID: String?) {
@@ -200,26 +244,15 @@ final class ClipboardStore: ObservableObject {
         return inserted
     }
 
-    /// Move an item to the top of history (pasting/copying it from the palette re-recencies it, Raycast-style). Display order is rowid, so this is a delete + re-insert under the same id; the fresh `createdAt` keeps date buckets descending and the image blob is never touched.
+    /// Move an item to the top of history (pasting/copying it from the palette re-recencies it, Raycast-style).
     func promote(_ item: ClipboardItem) {
-        guard items.first?.id != item.id else { return }
-        let promoted = ClipboardItem(
-            id: item.id, kind: item.kind, text: item.text, imagePath: item.imagePath,
-            createdAt: Date(), sourceBundleID: item.sourceBundleID)
-        if let deleteStmt = deleteByIDStmt, let insertStmt {
-            // One transaction: `id` is UNIQUE and a crash between the two statements must not lose the row.
-            sqlite3_exec(db, "BEGIN", nil, nil, nil)
-            sqlite3_bind_text(deleteStmt, 1, item.id.uuidString, -1, SQLITE_TRANSIENT)
-            sqlite3_step(deleteStmt)
-            sqlite3_reset(deleteStmt)
-            sqlite3_clear_bindings(deleteStmt)
-            bindAndInsert(insertStmt, promoted)
-            sqlite3_exec(db, "COMMIT", nil, nil, nil)
-        }
-        // Array ops also cover items surfaced by FTS from beyond the in-memory window.
-        items.removeAll { $0.id == item.id }
-        items.insert(promoted, at: 0)
-        if items.count > Self.memoryWindow { items.removeLast() }
+        // A pinned row holds its place in the Pinned section, so re-recencying one would rewrite the row and its FTS entry for no visible change.
+        guard !item.isPinned, items.first?.id != item.id else { return }
+        reinsert(item.with(createdAt: Date(), pinnedAt: nil))
+    }
+
+    func togglePinned(_ item: ClipboardItem) {
+        if item.isPinned { unpin(item) } else { pin(item) }
     }
 
     func remove(_ item: ClipboardItem) {
@@ -245,13 +278,20 @@ final class ClipboardStore: ObservableObject {
         return URL(fileURLWithPath: path)
     }
 
+    /// Display order for `query`: pinned entries first, each block newest-first.
     func search(_ query: String) -> [ClipboardItem] {
         let q = query.trimmingCharacters(in: .whitespaces)
-        guard !q.isEmpty else { return items }
+        guard !q.isEmpty else { return orderedItems }
         if let searchCache, searchCache.query == q { return searchCache.result }
-        let result = runSearch(q)
+        // Pins are matched in memory rather than taken from the FTS result: they are all resident (see `items`), and the statement's LIMIT would otherwise drop one out of a busy query's matches.
+        let result = pinnedItems.filter { $0.matches(q) } + runSearch(q).filter { !$0.isPinned }
         searchCache = (q, result)
         return result
+    }
+
+    /// Row index of `item` among the results for `query` — lets the palette keep its selection on a row that moved (pin toggle, promote) whether or not the search is filtered. Reads the same memoized result the list renders.
+    func rowIndex(of item: ClipboardItem, in query: String) -> Int? {
+        search(query).firstIndex { $0.id == item.id }
     }
 
     private func runSearch(_ q: String) -> [ClipboardItem] {
@@ -273,13 +313,78 @@ final class ClipboardStore: ObservableObject {
     // MARK: - Private
 
     private func fallbackSearch(_ q: String) -> [ClipboardItem] {
-        items.filter { ($0.text?.localizedCaseInsensitiveContains(q)) ?? false }
+        items.filter { $0.matches(q) }
+    }
+
+    private var orderedItems: [ClipboardItem] {
+        if let orderedCache { return orderedCache }
+        let pinned = pinnedItems
+        // An unpinned history renders `items` as-is, so it never pays for the split.
+        let result = pinned.isEmpty ? items : pinned + items.filter { !$0.isPinned }
+        orderedCache = result
+        return result
+    }
+
+    /// The Pinned section's contents in pin order, oldest pin first: a new pin joins the end of the section instead of displacing the ones already there.
+    private var pinnedItems: [ClipboardItem] {
+        items.filter(\.isPinned)
+            .sorted { ($0.pinnedAt ?? .distantFuture) < ($1.pinnedAt ?? .distantFuture) }
+    }
+
+    /// The row keeps its place in the history and gains a stamp, which puts it at the head of the Pinned section.
+    private func pin(_ item: ClipboardItem) {
+        let stamp = Date()
+        let pinned = item.with(pinnedAt: stamp)
+        if let stmt = pinStmt {
+            sqlite3_bind_double(stmt, 1, stamp.timeIntervalSince1970)
+            sqlite3_bind_text(stmt, 2, item.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_step(stmt)
+            sqlite3_reset(stmt)
+            sqlite3_clear_bindings(stmt)
+        }
+        if let index = items.firstIndex(where: { $0.id == item.id }) {
+            items[index] = pinned
+        } else {
+            // Pinned from an FTS hit older than the in-memory window: splice it in at its recency position, since the Pinned section can only show resident rows.
+            let index = items.firstIndex { $0.createdAt < pinned.createdAt } ?? items.count
+            items.insert(pinned, at: index)
+        }
+    }
+
+    /// Unpinning rejoins the history as its newest entry rather than dropping the row back into the date bucket it came from, which would scroll the list out from under the selection. Raycast does the same.
+    private func unpin(_ item: ClipboardItem) {
+        reinsert(item.with(createdAt: Date(), pinnedAt: nil))
+    }
+
+    /// Rewrite a row under the same id so it leads the history: stored order is rowid, so this is a delete + re-insert, and the fresh `createdAt` keeps the date buckets descending. The image blob is never touched.
+    private func reinsert(_ updated: ClipboardItem) {
+        if let deleteStmt = deleteByIDStmt, let insertStmt {
+            // One transaction: `id` is UNIQUE and a crash between the two statements must not lose the row.
+            sqlite3_exec(db, "BEGIN", nil, nil, nil)
+            sqlite3_bind_text(deleteStmt, 1, updated.id.uuidString, -1, SQLITE_TRANSIENT)
+            sqlite3_step(deleteStmt)
+            sqlite3_reset(deleteStmt)
+            sqlite3_clear_bindings(deleteStmt)
+            bindAndInsert(insertStmt, updated)
+            sqlite3_exec(db, "COMMIT", nil, nil, nil)
+        }
+        // Array ops also cover items surfaced by FTS from beyond the in-memory window.
+        items.removeAll { $0.id == updated.id }
+        items.insert(updated, at: 0)
+        trimWindow()
+    }
+
+    /// Cap the in-memory window, but never drop a pinned row: those render however old they are.
+    private func trimWindow() {
+        guard items.count > Self.memoryWindow, let index = items.lastIndex(where: { !$0.isPinned })
+        else { return }
+        items.remove(at: index)
     }
 
     private func insert(_ item: ClipboardItem) {
         if let stmt = insertStmt { bindAndInsert(stmt, item) }
         items.insert(item, at: 0)
-        if items.count > Self.memoryWindow { items.removeLast() }
+        trimWindow()
         prune()
     }
 
@@ -301,6 +406,11 @@ final class ClipboardStore: ObservableObject {
             sqlite3_bind_text(stmt, 6, source, -1, SQLITE_TRANSIENT)
         } else {
             sqlite3_bind_null(stmt, 6)
+        }
+        if let pinnedAt = item.pinnedAt {
+            sqlite3_bind_double(stmt, 7, pinnedAt.timeIntervalSince1970)
+        } else {
+            sqlite3_bind_null(stmt, 7)
         }
         sqlite3_step(stmt)
         sqlite3_reset(stmt)
@@ -352,8 +462,9 @@ final class ClipboardStore: ObservableObject {
                 }
             }
         }
-        if items.last.map({ $0.createdAt < cutoff }) == true {
-            items.removeAll { $0.createdAt < cutoff }
+        // Checked against the oldest *unpinned* row: an exempt pin sitting at the tail would otherwise make this guard permanently true and re-scan the window on every capture.
+        if items.last(where: { !$0.isPinned }).map({ $0.createdAt < cutoff }) == true {
+            items.removeAll { $0.createdAt < cutoff && !$0.isPinned }
         }
     }
 
@@ -374,25 +485,49 @@ final class ClipboardStore: ObservableObject {
         if !columnExists("source_app", in: "items") {
             sqlite3_exec(db, "ALTER TABLE items ADD COLUMN source_app TEXT", nil, nil, nil)
         }
+        if !columnExists("pinned_at", in: "items") {
+            sqlite3_exec(db, "ALTER TABLE items ADD COLUMN pinned_at REAL", nil, nil, nil)
+        }
+        // Created after the migration rather than in `schema`, since the column may not exist yet on an older database.
+        sqlite3_exec(
+            db,
+            "CREATE INDEX IF NOT EXISTS items_pinned_at ON items(pinned_at) WHERE pinned_at IS NOT NULL",
+            nil, nil, nil)
         insertStmt = prepare(
-            "INSERT INTO items(id, kind, text, image_path, created_at, source_app) VALUES(?,?,?,?,?,?)"
+            """
+            INSERT INTO items(id, kind, text, image_path, created_at, source_app, pinned_at)
+            VALUES(?,?,?,?,?,?,?)
+            """
         )
+        // Every pinned row plus the newest `memoryWindow` unpinned ones, keyed off the floor rowid `windowFloor` looks up. Two indexed branches rather than one `pinned_at IS NOT NULL OR rowid >= ?`: the planner can't drive an OR from an index while holding the row order, so that form reads the whole table.
         loadStmt = prepare(
             """
-            SELECT id, kind, text, image_path, created_at, source_app FROM items
-            ORDER BY rowid DESC LIMIT ?
+            SELECT id, kind, text, image_path, created_at, source_app, pinned_at FROM (
+              SELECT rowid AS rid, * FROM items WHERE rowid >= ?1
+              UNION ALL
+              SELECT rowid AS rid, * FROM items WHERE pinned_at IS NOT NULL AND rowid < ?1
+            ) ORDER BY rid DESC
             """)
+        windowFloorStmt = prepare(
+            "SELECT rowid FROM items WHERE pinned_at IS NULL ORDER BY rowid DESC LIMIT 1 OFFSET ?")
         searchStmt = prepare(
             """
-            SELECT i.id, i.kind, i.text, i.image_path, i.created_at, i.source_app FROM items_fts f
-            JOIN items i ON i.rowid = f.rowid WHERE items_fts MATCH ? ORDER BY f.rowid DESC LIMIT 200
+            SELECT i.id, i.kind, i.text, i.image_path, i.created_at, i.source_app, i.pinned_at
+            FROM items_fts f JOIN items i ON i.rowid = f.rowid
+            WHERE items_fts MATCH ? ORDER BY f.rowid DESC LIMIT 200
             """)
         deleteByIDStmt = prepare("DELETE FROM items WHERE id = ?")
+        // Only ever sets a stamp: unpinning rewrites the whole row so it leads the history again.
+        pinStmt = prepare("UPDATE items SET pinned_at = ? WHERE id = ?")
         staleImagesStmt = prepare(
-            "SELECT image_path FROM items WHERE created_at < ? AND image_path IS NOT NULL")
-        deleteStaleStmt = prepare("DELETE FROM items WHERE created_at < ?")
-        return insertStmt != nil && loadStmt != nil && searchStmt != nil
-            && deleteByIDStmt != nil && staleImagesStmt != nil && deleteStaleStmt != nil
+            """
+            SELECT image_path FROM items
+            WHERE created_at < ? AND pinned_at IS NULL AND image_path IS NOT NULL
+            """)
+        deleteStaleStmt = prepare("DELETE FROM items WHERE created_at < ? AND pinned_at IS NULL")
+        return insertStmt != nil && loadStmt != nil && windowFloorStmt != nil && searchStmt != nil
+            && deleteByIDStmt != nil && pinStmt != nil && staleImagesStmt != nil
+            && deleteStaleStmt != nil
     }
 
     private func prepare(_ sql: String) -> OpaquePointer? {
@@ -411,12 +546,16 @@ final class ClipboardStore: ObservableObject {
     }
 
     private func closeDatabase() {
-        [insertStmt, loadStmt, searchStmt, deleteByIDStmt, staleImagesStmt, deleteStaleStmt]
-            .forEach { sqlite3_finalize($0) }
+        [
+            insertStmt, loadStmt, windowFloorStmt, searchStmt, deleteByIDStmt, pinStmt,
+            staleImagesStmt, deleteStaleStmt
+        ].forEach { sqlite3_finalize($0) }
         insertStmt = nil
         loadStmt = nil
+        windowFloorStmt = nil
         searchStmt = nil
         deleteByIDStmt = nil
+        pinStmt = nil
         staleImagesStmt = nil
         deleteStaleStmt = nil
         sqlite3_close_v2(db)
@@ -431,7 +570,12 @@ final class ClipboardStore: ObservableObject {
         return ClipboardItem(
             id: id, kind: kind, text: columnString(stmt, 2), imagePath: columnString(stmt, 3),
             createdAt: Date(timeIntervalSince1970: sqlite3_column_double(stmt, 4)),
-            sourceBundleID: columnString(stmt, 5))
+            sourceBundleID: columnString(stmt, 5), pinnedAt: columnDate(stmt, 6))
+    }
+
+    private static func columnDate(_ stmt: OpaquePointer?, _ index: Int32) -> Date? {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL else { return nil }
+        return Date(timeIntervalSince1970: sqlite3_column_double(stmt, index))
     }
 
     private static func columnString(_ stmt: OpaquePointer?, _ index: Int32) -> String? {

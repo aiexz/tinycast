@@ -13,7 +13,9 @@ struct RootPaletteView: View {
     @EnvironmentObject private var currencyRates: CurrencyRateStore
     @EnvironmentObject private var emojiIndex: EmojiIndex
     @EnvironmentObject private var frequentEmoji: FrequentEmojiStore
-    @EnvironmentObject private var calendarStore: CalendarStore
+    @EnvironmentObject private var uninstall: UninstallSession
+    @EnvironmentObject private var quicklinks: QuicklinkStore
+    @EnvironmentObject private var quicklinkArguments: QuicklinkArgumentSession
     /// Observed so a skin tone changed in Settings re-renders the grid glyphs immediately.
     @ObservedObject private var settings = AppCore.shared.settings
     @FocusState private var searchFocused: Bool
@@ -23,10 +25,8 @@ struct RootPaletteView: View {
     @State private var selectionIsRunning = false
     /// Highlighted row of whichever popover menu is open; reset to the first row on open, moved by ↑/↓ and hover, activated by ↵/click.
     @State private var menuSelection = 0
-    /// Bumped only when the selection should pull the scroll view with it (keyboard nav, list resets); mouse selection targets a visible row, so it leaves this and the list put.
-    @State private var scrollToken = UUID()
-    /// The emoji grid's scroll request — the lazy grid needs distinct reset/follow scroll ops, unlike the 1-D lists that recenter fine on `scrollToken`.
-    @State private var emojiScroll = EmojiScrollIntent(kind: .top)
+    /// The pending scroll request for whichever list or grid is mounted (modes are exclusive, so one piece of state serves all of them). Set only by keyboard nav and resets; mouse selection targets a visible row, so it leaves this and the scroll position put.
+    @State private var scroll = ScrollIntent(kind: .top)
 
     private var isQueryEmpty: Bool { vm.query.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -67,6 +67,29 @@ struct RootPaletteView: View {
 
     private var clipResults: [ClipboardItem] { store.search(vm.query) }
     private var histResults: [CalcHistoryEntry] { calcHistory.search(vm.query) }
+    /// The search field filters files by name or location on this screen.
+    private var uninstallResults: [UninstallCandidate] {
+        let query = vm.query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return uninstall.candidates }
+        return uninstall.candidates.filter {
+            $0.name.localizedCaseInsensitiveContains(query)
+                || $0.locationLabel.localizedCaseInsensitiveContains(query)
+        }
+    }
+    private var quicklinkResults: [Quicklink] {
+        let query = vm.query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return quicklinks.quicklinks }
+        return quicklinks.quicklinks.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    }
+    /// An argument taking `options=` renders them as rows, filtered by the field like every other
+    /// list; a free-text one has none, so the screen is a form with nothing to index and the flat
+    /// selection stays at zero.
+    private var argumentOptions: [String] {
+        let query = vm.query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return quicklinkArguments.options }
+        return quicklinkArguments.options.filter { $0.localizedCaseInsensitiveContains(query) }
+    }
+
     private var emojiSections: [EmojiGridSection] {
         EmojiGrid.sections(query: vm.query, index: emojiIndex, frequent: frequentEmoji)
     }
@@ -87,10 +110,9 @@ struct RootPaletteView: View {
         case .clipboard: return clipResults.count
         case .calculatorHistory: return histResults.count + calcCount
         case .emoji: return emojiResults.count
-        case .calendar: return calendarResults.count
-        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil: return 1
-        case .cameraPreview: return 0
-        case .caffeinateWhile: return SystemCommandActions.runningApps.count
+        case .uninstall: return uninstallResults.count
+        case .quicklinks: return quicklinkResults.count
+        case .quicklinkArguments: return argumentOptions.count
         }
     }
     /// Selection clamped into the current results — the single source of truth for highlight, preview and activation so the list and preview can never disagree.
@@ -125,8 +147,11 @@ struct RootPaletteView: View {
     private var selectedEmojiEntry: EmojiEntry? {
         emojiResults.indices.contains(selection) ? emojiResults[selection] : nil
     }
-    private var selectedCalendarEvent: CalendarEvent? {
-        calendarResults.indices.contains(selection) ? calendarResults[selection] : nil
+    private var selectedUninstallCandidate: UninstallCandidate? {
+        uninstallResults.indices.contains(selection) ? uninstallResults[selection] : nil
+    }
+    private var selectedQuicklink: Quicklink? {
+        quicklinkResults.indices.contains(selection) ? quicklinkResults[selection] : nil
     }
 
     /// The bottom-right Actions menu content for the current mode's selection, or nil when the selection has no actions.
@@ -138,7 +163,15 @@ struct RootPaletteView: View {
             }
             if let app = selectedAppEntry {
                 return AppActionsMenu.content(
-                    app: app, core: core, favorites: favorites, running: selectionIsRunning)
+                    app: app, searchQuery: vm.query, core: core, favorites: favorites,
+                    running: selectionIsRunning,
+                    onResetRanking: {
+                        core.resetRanking(for: app)
+                        // Reset can move the item; keep the highlight on the item whose action ran.
+                        if let index = appResults.firstIndex(of: app) {
+                            vm.selection = index + calcCount
+                        }
+                    })
             }
             return nil
         case .clipboard:
@@ -162,10 +195,19 @@ struct RootPaletteView: View {
                     entry: emoji, core: core, target: vm.pasteTarget)
             }
             return nil
-        case .calendar:
-            guard let event = selectedCalendarEvent else { return nil }
-            return CalendarActionsMenu.content(event: event, store: calendarStore)
-        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
+        case .uninstall:
+            if let candidate = selectedUninstallCandidate {
+                return UninstallActionsMenu.content(
+                    candidate: candidate, session: uninstall, core: core)
+            }
+            return nil
+        case .quicklinks:
+            if let quicklink = selectedQuicklink {
+                return QuicklinkActionsMenu.content(quicklink: quicklink, core: core)
+            }
+            return nil
+        case .quicklinkArguments:
+            // The argument form has one action — submit — and it is already ↵.
             return nil
         }
     }
@@ -178,7 +220,7 @@ struct RootPaletteView: View {
             },
             PopoverMenuItem(title: "Settings", systemImage: "gearshape", shortcut: "⌘,") {
                 core.showSettings()
-            },
+            }
         ])
     }
 
@@ -196,12 +238,18 @@ struct RootPaletteView: View {
         let hist = vm.mode == .calculatorHistory ? histResults : []
         let emojiSections = vm.mode == .emoji ? emojiSections : []
         let emojis = emojiSections.flatMap(\.entries)
+        let uninstallRows = vm.mode == .uninstall ? uninstallResults : []
+        let links = vm.mode == .quicklinks ? quicklinkResults : []
+        let argumentOptions = vm.mode == .quicklinkArguments ? argumentOptions : []
+        // Newest stored clip + the reorder token: the pair changes only when the store mutates, never when a query filters the list.
+        let clipFollow = ClipFollowKey(id: store.items.first?.id, token: vm.followToken)
         // Every count/selection below derives from this one calc/offset pair — the flat selection index must always match the visible row order, calc card included.
         let calc = calcResult
         let offset = calc == nil ? 0 : 1
         // Only the active mode is non-empty.
-        let calendarEvents = vm.mode == .calendar ? calendarResults : []
-        let count = apps.count + offset + clips.count + hist.count + emojis.count + calendarEvents.count
+        let count =
+            apps.count + offset + clips.count + hist.count + emojis.count + uninstallRows.count
+            + links.count + argumentOptions.count
         let sel = count == 0 ? 0 : min(max(vm.selection, 0), count - 1)
         let calcSelected = calc != nil && sel == 0
         // An error card is selectable but has no action: it must not drive the Copy Answer pill, ⌘K menu, or Enter.
@@ -219,21 +267,22 @@ struct RootPaletteView: View {
         let selectedApp = apps.indices.contains(sel - offset) ? apps[sel - offset] : nil
         // Derive the footer label from the already-resolved selection so `bottomBar` doesn't re-run `appResults` (its filter/sort aren't memoized). The primary/Actions group is hidden when there's nothing to act on: no results in any mode, or an error calc card (selectable but action-less).
         let pillLabel = actionPillLabel(selectedApp: selectedApp, calcActionable: calcActionable)
-        let showActionGroup = count > 0 && !(calcSelected && !calcActionable)
+        // The argument form has no rows to count when its argument takes free text, but ↵ still
+        // does something — and the pill is the only thing that says what.
+        let showActionGroup =
+            (count > 0 || vm.mode == .quicklinkArguments) && !(calcSelected && !calcActionable)
 
         // The `header` (and its single search field) is always attached in the same position via safeAreaInset so its focus survives the compact↔expanded swap — only the results below it toggle. Collapsed shows the bar alone; expanded floats header + action bar over the list with edge-dissolve (see docs/ui.md).
-        let surface = AnyView(
-            Group {
-                if isCollapsed {
-                    Color.clear
-                } else {
-                    content(
-                        apps: apps, clips: clips, hist: hist, emojiSections: emojiSections,
-                        calendarEvents: calendarEvents, calc: calc, selection: sel,
-                        favoriteCount: favoriteCount, rankedCount: rankedCount,
-                        showSections: showSections
-                    )
-                }
+        return Group {
+            if isCollapsed {
+                Color.clear
+            } else {
+                content(
+                    apps: apps, clips: clips, hist: hist, emojiSections: emojiSections,
+                    uninstallRows: uninstallRows, links: links, argumentOptions: argumentOptions,
+                    calc: calc, selection: sel,
+                    favoriteCount: favoriteCount, showSections: showSections
+                )
             }
             .safeAreaInset(edge: .top, spacing: 0) { header }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -286,19 +335,20 @@ struct RootPaletteView: View {
         }
         .onChange(of: vm.query) {
             vm.selection = 0
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
+            scroll = ScrollIntent(kind: .top)
         }
         .onChange(of: vm.mode) {
             vm.selection = 0
             showActions = false
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
+            scroll = ScrollIntent(kind: .top)
+            // Every way out of the Uninstall screen: back chevron, bare backspace, a fresh summon.
+            if vm.mode != .uninstall { uninstall.cancel() }
+            // Same for a half-filled argument form: leaving the screen abandons the pending open.
+            if vm.mode != .quicklinkArguments { core.cancelQuicklinkArguments() }
         }
-        // Pop-to-root: `prepare` clears query/selection, but if both were already at their defaults the handlers above never fire — this token guarantees the scroll itself snaps back to the top.
+        // Pop-to-root: `prepare` clears query/selection, but if both were already at their defaults the handlers above never fire — this intent guarantees the scroll itself snaps back to the origin.
         .onChange(of: vm.resetToken) {
-            scrollToken = UUID()
-            emojiScroll = EmojiScrollIntent(kind: .top)
+            scroll = ScrollIntent(kind: .top)
         }
         // Opening either menu highlights its first row and closes the other, so exactly one menu is ever open and always has a highlight.
         .onChange(of: showActions) {
@@ -315,11 +365,15 @@ struct RootPaletteView: View {
             }
             vm.menuOpen = menuOpen
         }
-        // A new top clip while the list is showing (promote-on-paste, live capture) pulls the highlight and scroll back to the row that just moved up.
-        .onChange(of: clips.first?.id) { _, newTop in
-            guard vm.mode == .clipboard, newTop != nil else { return }
-            vm.selection = 0
-            scrollToken = UUID()
+        // Follow a row the store moved: a fresh capture (or promote-on-paste) lands at the head of its section, and pinning lifts a row into the Pinned section. With a query typed the highlight stays put; `AppCore` has already placed it for pin/paste.
+        .onChange(of: clipFollow) { old, new in
+            // A nil `old.id` is the first load landing, not a row that moved.
+            guard vm.mode == .clipboard, old.id != nil else { return }
+            if isQueryEmpty, old.id != new.id, let id = new.id,
+                let index = clips.firstIndex(where: { $0.id == id }) {
+                vm.selection = index
+            }
+            scroll = ScrollIntent(kind: .follow)
         }
         .onAppear { searchFocused = true }
         // Typing/clearing/overflow/settings all flip `paletteIsCollapsed`; resize the window to match.
@@ -340,7 +394,13 @@ struct RootPaletteView: View {
             return .handled
         }
         .onKeyPress(.downArrow) {
-            if isCollapsed { return .ignored }
+            if isCollapsed {
+                // The compact bar has no visible selection; Down reveals the list at its first row
+                // while the shared search field stays mounted and focused.
+                vm.selection = 0
+                core.expandFromCompact()
+                return .handled
+            }
             if menuOpen {
                 moveMenu(1)
                 return .handled
@@ -370,8 +430,49 @@ struct RootPaletteView: View {
             move(1)
             return .handled
         }
-        // With a menu open, plain ↵ activates its highlighted row. A modified ↵ always runs the selection's own action regardless of menu state: ⌘↵ the secondary copy action (each menu advertises it), ⌥↵ paste-in-place; plain ↵ (no menu) falls through to the field's onSubmit.
-        .onKeyPress(keys: [.return], phases: .down, action: handleModifiedReturn)
+        // With a menu open, plain ↵ activates its highlighted row. A modified ↵ always runs the selection's own action regardless of menu state: ⌘↵ the advertised secondary action, ⌥↵ paste-in-place; plain ↵ (no menu) falls through to the field's onSubmit.
+        .onKeyPress(keys: [.return], phases: .down) { press in
+            let command = press.modifiers.contains(.command)
+            let option = press.modifiers.contains(.option)
+            if menuOpen, !command, !option {
+                activateMenuItem(menuSelection)
+                return .handled
+            }
+            guard command || option else { return .ignored }
+            switch vm.mode {
+            case .emoji:
+                guard emojiResults.indices.contains(selection) else { return .ignored }
+                if command {
+                    core.copyEmoji(emojiResults[selection])
+                } else {
+                    core.pasteEmojiKeepingWindowOpen(emojiResults[selection])
+                }
+            case .clipboard:
+                guard command, clipResults.indices.contains(selection) else { return .ignored }
+                core.copyToClipboard(clipResults[selection])
+            case .calculatorHistory:
+                // The inline calc card (index 0 when present) has no secondary action; only stored entries respond.
+                let index = selection - calcCount
+                guard command, histResults.indices.contains(index) else { return .ignored }
+                core.copyHistoryExpression(histResults[index])
+            case .uninstall:
+                guard command, let candidate = selectedUninstallCandidate, !candidate.isLocked
+                else { return .ignored }
+                uninstall.toggle(candidate.id)
+            case .quicklinks:
+                guard command, let quicklink = selectedQuicklink,
+                    quicklink.openWithBundleID != nil
+                else { return .ignored }
+                core.openQuicklink(id: quicklink.id, forcingDefaultApp: true)
+            case .quicklinkArguments:
+                return .ignored
+            case .launcher:
+                guard command, let app = selectedAppEntry, app.canRevealInFinder
+                else { return .ignored }
+                core.showInFinder(app)
+            }
+            return .handled
+        }
         .onKeyPress(.escape) {
             if showActions || showAppMenu {
                 closeMenus()
@@ -383,11 +484,6 @@ struct RootPaletteView: View {
         .onKeyPress(.tab) {
             if menuOpen { return .handled }
             toggleMode()
-            return .handled
-        }
-        .onKeyPress(keys: [","], phases: .down) { press in
-            guard press.modifiers.contains(.command) else { return .ignored }
-            core.showSettings()
             return .handled
         }
         // ⌘K toggles the actions panel for the current selection.
@@ -410,9 +506,34 @@ struct RootPaletteView: View {
                 deleteSelectedClip()
             case .calculatorHistory:
                 deleteSelectedHistoryEntry()
-            case .launcher, .emoji, .calendar, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
+            case .quicklinks:
+                guard let quicklink = selectedQuicklink else { return .ignored }
+                Task { await core.deleteQuicklink(id: quicklink.id) }
+            case .launcher, .emoji, .uninstall, .quicklinkArguments:
                 return .ignored
             }
+            return .handled
+        }
+        // ⌘P pins/unpins the selected clip — mirrors the Actions menu row, and works while that menu is open like the other advertised chords.
+        .onKeyPress(keys: ["p"], phases: .down) { press in
+            guard press.modifiers.contains(.command) else { return .ignored }
+            if vm.mode == .clipboard, clipResults.indices.contains(selection) {
+                core.togglePinnedClip(clipResults[selection])
+                return .handled
+            }
+            if vm.mode == .quicklinks, let quicklink = selectedQuicklink {
+                core.toggleQuicklinkPinned(id: quicklink.id)
+                return .handled
+            }
+            return .ignored
+        }
+        // Both cases are listed because Shift uppercases the reported key. The compact bar is excluded like ⌘K — it shows no selection to aim a destructive action at.
+        .onKeyPress(keys: ["q", "Q"], phases: .down) { press in
+            guard press.modifiers.contains(.control), press.modifiers.contains(.shift),
+                !isCollapsed, vm.mode == .launcher, let app = selectedAppEntry,
+                app.kind == .application, core.runningApps.isRunning(app)
+            else { return .ignored }
+            core.quit(app)
             return .handled
         }
     }
@@ -458,29 +579,50 @@ struct RootPaletteView: View {
         .frame(maxWidth: .infinity)
     }
 
-    /// Search is single-line: strip every Unicode newline during paste before it reaches palette state.
-    private var searchQuery: Binding<String> {
-        Binding(get: { vm.query }, set: { vm.query = $0.filter { !$0.isNewline } })
+    /// In the argument form the field *is* the current argument's input, so it names that argument
+    /// rather than the screen.
+    private var searchPrompt: String {
+        vm.mode == .quicklinkArguments ? quicklinkArguments.prompt : vm.mode.placeholder
     }
 
     /// The one search field, kept in a single tree position (the `header`) so its focus survives the compact↔expanded swap.
+    ///
+    /// The placeholder is drawn here rather than passed as the field's `prompt`. AppKit gives an
+    /// `NSTextField` a field editor one point taller than the field itself, and a prompt is rendered
+    /// by whichever of the two currently owns the text — so the *same* placeholder glyphs sit a point
+    /// higher once the field takes the panel's shared field editor. That editor is created lazily and
+    /// then cached on the window, which is why the step was only ever visible on the first summon
+    /// after launch. Drawing it here pins it to SwiftUI's layout, where nothing can move it —
+    /// measured identical in both focus states, against a one-point step for the real prompt.
+    ///
+    /// A background rather than an overlay, so the caret still draws over it.
     private var searchField: some View {
-        TextField(
-            "", text: searchQuery,
-            prompt: Text(vm.mode.placeholder).foregroundStyle(Theme.Colors.textTertiary)
-        )
-        .textFieldStyle(.plain)
-        .font(Theme.Typography.searchField)
-        .tint(.white)
-        .focused($searchFocused)
-        .onSubmit(activateSelection)
+        TextField("", text: $vm.query)
+            .textFieldStyle(.plain)
+            .font(Theme.Typography.searchField)
+            .tint(.white)
+            .focused($searchFocused)
+            .onSubmit(activateSelection)
+            .background(alignment: .leading) {
+                if vm.query.isEmpty {
+                    Text(searchPrompt)
+                        .font(Theme.Typography.searchField)
+                        .foregroundStyle(Theme.Colors.textTertiary)
+                        .lineLimit(1)
+                        // Never a click target: tapping the placeholder must still land the caret.
+                        .allowsHitTesting(false)
+                }
+            }
+            // The prompt used to carry this; without it the field would be unlabelled.
+            .accessibilityLabel(Text(searchPrompt))
     }
 
     @ViewBuilder
     private func content(
         apps: [AppEntry], clips: [ClipboardItem], hist: [CalcHistoryEntry],
-        emojiSections: [EmojiGridSection], calendarEvents: [CalendarEvent], calc: CalcResult?,
-        selection: Int, favoriteCount: Int, rankedCount: Int, showSections: Bool
+        emojiSections: [EmojiGridSection], uninstallRows: [UninstallCandidate],
+        links: [Quicklink], argumentOptions: [String], calc: CalcResult?,
+        selection: Int, favoriteCount: Int, showSections: Bool
     ) -> some View {
         switch vm.mode {
         case .launcher:
@@ -494,7 +636,7 @@ struct RootPaletteView: View {
                 favoriteCount: favoriteCount,
                 rankedCount: rankedCount,
                 showSections: showSections,
-                scrollToken: scrollToken,
+                scroll: scroll,
                 calc: calc,
                 calcSelected: calcSelected,
                 onActivateCalc: {
@@ -506,6 +648,7 @@ struct RootPaletteView: View {
                     vm.selection = 0
                     openActions()
                 },
+                onActivate: { core.launch($0, searchQuery: vm.query) },
                 onActions: { app in
                     if let index = apps.firstIndex(of: app) { vm.selection = index + offset }
                     openActions()
@@ -521,7 +664,7 @@ struct RootPaletteView: View {
                     ClipboardList(
                         results: clips,
                         selectedID: selected?.id,
-                        scrollToken: scrollToken,
+                        scroll: scroll,
                         onSelect: { item in vm.selection = clips.firstIndex(of: item) ?? 0 },
                         onActivate: activateSelection,
                         onActions: { item in
@@ -548,7 +691,7 @@ struct RootPaletteView: View {
                 CalculatorHistoryList(
                     results: hist,
                     selectedID: calcSelected ? nil : selected?.id,
-                    scrollToken: scrollToken,
+                    scroll: scroll,
                     calc: calc,
                     calcSelected: calcSelected,
                     onActivateCalc: {
@@ -580,7 +723,7 @@ struct RootPaletteView: View {
                     sections: emojiSections,
                     selection: selection,
                     tone: settings.emojiSkinTone,
-                    scroll: emojiScroll,
+                    scroll: scroll,
                     onSelect: { vm.selection = $0 },
                     onActivate: activateSelection,
                     onActions: { flat in
@@ -589,41 +732,79 @@ struct RootPaletteView: View {
                     }
                 )
             }
-        case .calendar:
-            switch calendarStore.authorizationStatus {
-            case .notDetermined:
-                CalendarPermissionView {
-                    Task { await calendarStore.requestAccessAndRefresh() }
-                }
-            case .fullAccess:
-                if calendarStore.isLoading {
-                    EmptyResults(text: "Loading calendar…")
-                } else if calendarEvents.isEmpty {
-                    EmptyResults(text: isQueryEmpty ? "No upcoming events" : "No matching events")
+        case .uninstall:
+            switch uninstall.state {
+            case .idle, .scanning:
+                EmptyResults(text: "Looking for leftover files…")
+            case .failed(let message):
+                EmptyResults(text: message)
+            case .ready:
+                if uninstallRows.isEmpty {
+                    EmptyResults(
+                        text: isQueryEmpty ? "Nothing left to remove" : "No matching files")
                 } else {
-                    let selected = calendarEvents.indices.contains(selection) ? calendarEvents[selection] : nil
-                    CalendarScheduleView(
-                        events: calendarEvents,
-                        selectedID: selected?.id,
-                        scrollToken: scrollToken,
-                        showsSummary: isQueryEmpty,
-                        onSelect: { event in vm.selection = calendarEvents.firstIndex(of: event) ?? 0 },
-                        onActivate: { calendarStore.openInCalendar($0) },
-                        onActions: { event in
-                            if let index = calendarEvents.firstIndex(of: event) { vm.selection = index }
+                    UninstallList(
+                        results: uninstallRows,
+                        selectedID: uninstallRows.indices.contains(selection)
+                            ? uninstallRows[selection].id : nil,
+                        summary: uninstallSummary,
+                        scroll: scroll,
+                        onSelect: { candidate in
+                            if let index = uninstallRows.firstIndex(of: candidate) {
+                                vm.selection = index
+                            }
+                        },
+                        onToggle: { uninstall.toggle($0.id) },
+                        onActions: { candidate in
+                            if let index = uninstallRows.firstIndex(of: candidate) {
+                                vm.selection = index
+                            }
                             openActions()
-                        })
+                        }
+                    )
                 }
-            case .denied, .restricted, .writeOnly, .authorized:
-                CalendarPermissionView(denied: true) { Permissions.openCalendarSettings() }
-            @unknown default:
-                CalendarPermissionView(denied: true) { Permissions.openCalendarSettings() }
             }
-        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
-            SystemCommandView(mode: vm.mode, query: vm.query, selection: selection)
-        case .cameraPreview:
-            CameraPreviewView()
+        case .quicklinks:
+            if links.isEmpty {
+                EmptyResults(
+                    text: quicklinks.quicklinks.isEmpty
+                        ? "No quicklinks yet" : "No matching quicklinks")
+            } else {
+                QuicklinkList(
+                    results: links,
+                    selectedID: links.indices.contains(selection) ? links[selection].id : nil,
+                    scroll: scroll,
+                    onSelect: { link in
+                        if let index = links.firstIndex(of: link) { vm.selection = index }
+                    },
+                    onActivate: activateSelection,
+                    onActions: { link in
+                        if let index = links.firstIndex(of: link) { vm.selection = index }
+                        openActions()
+                    }
+                )
+            }
+        case .quicklinkArguments:
+            QuicklinkArgumentsView(
+                options: argumentOptions,
+                selection: selection,
+                scroll: scroll,
+                onSelect: { vm.selection = $0 },
+                onActivate: activateSelection
+            )
         }
+    }
+
+    /// Stands in for the section headers the other lists use.
+    private var uninstallSummary: String {
+        let total = uninstall.plan?.removableIDs.count ?? 0
+        let size = MeasuredSize(bytes: uninstall.selectedBytes).formatted
+        return "\(uninstall.selectedCount) of \(total) files selected · \(size)"
+    }
+
+    /// The Uninstall screen's primary action is destructive, so its pill isn't white.
+    private var pillTint: Color {
+        vm.mode == .uninstall ? Theme.Colors.destructive : .primary
     }
 
     private func bottomBar(pillLabel: String, showActionGroup: Bool) -> some View {
@@ -651,7 +832,7 @@ struct RootPaletteView: View {
                 HStack(spacing: Theme.Spacing.sm) {
                     Text(pillLabel)
                         .font(Theme.Typography.bar)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(pillTint)
                     KeyCapChip(text: "↵", style: .outline)
                 }
             }
@@ -678,15 +859,20 @@ struct RootPaletteView: View {
             return vm.pasteTarget?.pasteTitle ?? "Paste"
         case .calculatorHistory:
             return "Copy Answer"
-        case .calendar: return "Open in Calendar"
-        case .setMicrophoneLevel: return "Set Level"
-        case .caffeinateFor, .caffeinateUntil, .caffeinateWhile: return "Caffeinate"
-        case .cameraPreview: return ""
+        case .uninstall:
+            return "Uninstall Application"
+        case .quicklinks:
+            return "Open Quicklink"
+        case .quicklinkArguments:
+            return quicklinkArguments.isLastArgument ? "Open Quicklink" : "Next"
         case .launcher:
             if calcActionable { return "Copy Answer" }
             switch selectedApp?.kind {
             case .systemSettings: return "Open System Setting"
-            case .command: return "Open Command"
+            case .command: return "Run Command"
+            case .customCommand: return "Run Custom Command"
+            case .systemAction: return "Run System Action"
+            case .quicklink: return "Open Quicklink"
             default: return "Open Application"
             }
         }
@@ -792,8 +978,7 @@ struct RootPaletteView: View {
     private func move(_ delta: Int) {
         guard resultCount > 0 else { return }
         vm.selection = min(max(selection + delta, 0), resultCount - 1)
-        scrollToken = UUID()
-        emojiScroll = EmojiScrollIntent(kind: .follow)
+        scroll = ScrollIntent(kind: .follow)
     }
 
     /// Move the open menu's highlight, clamped at the ends (no wrap — consistent with `move`).
@@ -815,7 +1000,7 @@ struct RootPaletteView: View {
             counts: emojiSections.map(\.entries.count), columns: EmojiGrid.columns)
         guard resultCount > 0 else { return }
         vm.selection = delta > 0 ? geometry.down(from: selection) : geometry.up(from: selection)
-        emojiScroll = EmojiScrollIntent(kind: .follow)
+        scroll = ScrollIntent(kind: .follow)
     }
 
     /// Tab flips launcher↔clipboard; Calculator History (entered via its command) exits back to the launcher rather than joining the cycle.
@@ -840,7 +1025,7 @@ struct RootPaletteView: View {
             }
             let index = selection - calcCount
             guard appResults.indices.contains(index) else { return }
-            core.launch(appResults[index])
+            core.launch(appResults[index], searchQuery: vm.query)
         case .clipboard:
             guard clipResults.indices.contains(selection) else { return }
             core.paste(clipResults[selection])
@@ -856,20 +1041,36 @@ struct RootPaletteView: View {
         case .emoji:
             guard emojiResults.indices.contains(selection) else { return }
             core.pasteEmoji(emojiResults[selection])
-        case .calendar:
-            guard let event = selectedCalendarEvent else { return }
-            calendarStore.openInCalendar(event)
-        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil:
-            SystemCommandActions.submit(mode: vm.mode, query: vm.query)
-        case .caffeinateWhile:
-            let apps = SystemCommandActions.runningApps
-            guard apps.indices.contains(selection) else { return }
-            Task { await core.caffeinationController.caffeinateWhileApp(.bundleID(apps[selection].id)) }
-            core.hidePalette(restoreFocus: false)
-        case .cameraPreview:
-            return
+        case .uninstall:
+            core.performUninstall()
+        case .quicklinks:
+            guard quicklinkResults.indices.contains(selection) else { return }
+            core.openQuicklink(id: quicklinkResults[selection].id)
+        case .quicklinkArguments:
+            // An options argument submits the highlighted choice; a free-text one submits the field.
+            let options = argumentOptions
+            let value: String
+            if quicklinkArguments.options.isEmpty {
+                value = vm.query
+            } else {
+                guard options.indices.contains(selection) else { return }
+                value = options[selection]
+            }
+            core.submitQuicklinkArgument(value)
+            // More arguments to go: clear the field for the next one and reset the choice list.
+            if quicklinkArguments.isActive {
+                vm.query = ""
+                vm.selection = 0
+                scroll = ScrollIntent(kind: .top)
+            }
         }
     }
+}
+
+/// Change key for the clipboard list's follow-the-moved-row handler: the newest stored clip (a capture or promote puts a different row there) plus the token an action bumps when it reorders the list (pin/unpin). Deliberately read from the store, not the filtered results, so typing a query never reads as a row that moved.
+private struct ClipFollowKey: Equatable {
+    let id: ClipboardItem.ID?
+    let token: UUID
 }
 
 /// The footer's glass menu circle; hover lives here so a mouse sweep never re-renders the palette body.

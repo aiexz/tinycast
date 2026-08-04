@@ -2,14 +2,21 @@
 
 How Tinycast is wired together. See the per-subsystem docs for internals:
 [palette](palette.md), [launcher](launcher.md), [calculator](calculator.md),
-[clipboard](clipboard.md), [hotkeys](hotkeys.md), [ui](ui.md).
+[clipboard](clipboard.md), [custom commands](custom-commands.md), [snippets](snippets.md),
+[hotkeys](hotkeys.md), [ui](ui.md).
+System-action catalog, launcher integration and permission behavior are documented in
+[launcher](launcher.md#system-actions).
 
 ## Single-owner core
 
 `AppCore.shared` (`Core/AppCore.swift`) is a `@MainActor` singleton that owns every long-lived
-manager — `AppIndex`, `ClipboardStore`, `ClipboardManager`, `HotKeyManager`, `AppSettings`,
-`FavoritesStore`, `VisibilityStore`, `CalculatorHistoryStore`, `CurrencyRateStore`, `RunningAppsMonitor`,
-`PaletteViewModel` — plus the window controllers. `AppDelegate.applicationDidFinishLaunching` calls
+manager — `AppIndex`, `ClipboardStore`, `ClipboardManager`, `SnippetsStore`,
+`SnippetKeywordListener`, `SnippetTextInjector`, `HotKeyManager`, `AppSettings`, `FavoritesStore`,
+`VisibilityStore`, `LauncherRankingStore`, `CustomCommandStore`, `CalculatorHistoryStore`,
+`CurrencyRateStore`, `RunningAppsMonitor`, `PaletteViewModel` — plus the window controllers, including
+`DialogController` (dialogs are reached from elsewhere via `AppCore.showNotice` /
+`confirm`, so the controller stays single-owned).
+`AppDelegate.applicationDidFinishLaunching` calls
 `AppCore.shared.start()` and nothing else; that is the single wiring point. All palette / paste /
 launch actions are methods on `AppCore` that the SwiftUI views call.
 
@@ -28,9 +35,39 @@ imperatively from AppKit.
 - **Settings / About** — plain `NSWindow`s via `AuxWindowController` (in
   `Features/About/AboutView.swift`). SwiftUI `Settings` / `Window` scenes are unreliable for accessory
   apps, so this is deliberate.
+- **Dialogs** borderless `DialogPanel`s driven by `DialogController`, the app's only
+  presenter for confirmations, failure reports and value prompts. **HUDs** are separate:
+  `MessageHUDController` and `VolumeHUDController` (`Core/HUD/`), both over a shared `HUDPresenter`. `NSAlert` is deliberately unused: its
+  `runModal` nested run loop lets Carbon hotkeys stack dialogs, and an Aqua alert clashes with the
+  forced-dark surface. Presentation is `async`, so nothing blocks the main actor. See
+  [ui.md](ui.md#dialogs--hud).
 
 The app forces `.darkAqua` appearance globally; the Liquid Glass material is tuned for a dark surface
 only.
+
+## Snippets
+
+`SnippetRepository` is a Foundation-only `Sendable` value that owns all snippet disk access under
+`~/Library/Application Support/<bundle-id>/Snippets/`, keeping stable, beta and dev isolated. The
+model, Markdown codec, template engine, repository, keyword buffer, event classification and listener
+lifecycle policy compile in the standalone harness without AppKit. `SnippetsStore` is the `@MainActor`
+publisher/coordinator: initialization is cheap, repository work runs off-main, and a debounced
+generation-ordered watcher reloads external edits and rearms after directory replacement. A stored
+snippet is identified by its source file path, so editing frontmatter never invalidates selection or
+launcher identity. `AppCore` projects every successful store snapshot into `AppIndex` and
+`SnippetKeywordListener`; neither consumer reads or parses snippet files independently. The store
+runs only while the feature switch is on — snippets ship off — so an untouched feature costs no
+load, no watcher and no tap.
+
+The feature switch doubles as keyword-expansion consent: it is an explicit opt-in confirmed in
+Settings and excluded from settings backups. When an enabled feature comes back at startup, the
+listener waits until Accessibility is granted — the only permission it needs, since its tap is
+listen-only — then its health check installs the tap without prompting. Permission prompts
+originate only from the enabling gesture in Settings, never from startup, the listener, callbacks or the
+health check. The listener owns only matching and tap lifecycle; `AppCore` owns template expansion and
+argument prompts, while `SnippetTextInjector` owns target activation, keyword deletion, text delivery,
+temporary pasteboard restoration and cursor placement. See [snippets.md](snippets.md) for storage,
+frontmatter, templates, conflicts, permissions and delivery invariants.
 
 ## Concurrency
 
@@ -38,6 +75,8 @@ The target builds in **Swift 6 language mode** (tools version 6.0, no language-m
 data-race safety violations are hard errors. Almost everything is `@MainActor`; cross-actor model
 types are `Sendable`. Heavy / IO work (app scan, image decode, the FX rate fetch) is deliberately
 pushed off-main via `Task.detached` / `nonisolated`. Keep that boundary when adding code.
+`SystemAction.swift` is the pure, `Sendable` metadata boundary; `SystemActionRunner` owns AppKit,
+CoreAudio, process and Accessibility side effects, while `AppCore` owns confirmation and failure UI.
 
 House idioms for the sharp edges:
 

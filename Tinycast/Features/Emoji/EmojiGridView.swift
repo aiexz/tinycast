@@ -56,27 +56,13 @@ private enum EmojiGridItem: Identifiable {
     }
 }
 
-/// A grid scroll request: reset and follow need different, estimation-safe scroll ops on the lazy grid, so the caller states which it wants instead of the grid guessing from one shared token.
-struct EmojiScrollIntent: Equatable {
-    enum Kind {
-        /// Reset: clamp to the true top. `.top` on the first item is estimation-proof — nothing sits above it, so its offset can only be 0.
-        case top
-        /// Keyboard nav: minimal scroll-to-visible (nil anchor), which never repositions an already-visible row.
-        case follow
-    }
-
-    var kind: Kind
-    /// Distinguishes back-to-back intents of the same kind so `onChange` still fires.
-    var nonce = UUID()
-}
-
 struct EmojiGridView: View {
     let sections: [EmojiGridSection]
     /// Flat selection index across all sections in order — the same single-source-of-truth contract as the list modes.
     let selection: Int
     let tone: EmojiSkinTone
     /// The pending scroll request; mouse selection leaves it untouched so clicking a row never yanks the scroll position.
-    let scroll: EmojiScrollIntent
+    let scroll: ScrollIntent
     let onSelect: (Int) -> Void
     let onActivate: () -> Void
     let onActions: (Int) -> Void
@@ -111,8 +97,7 @@ struct EmojiGridView: View {
         return section.id + "-row-\((selection - section.start) / EmojiGrid.columns)"
     }
 
-    /// First header and first row, ID'd the same way as `items`; the header is the scroll-to-top target.
-    private var firstItemID: String? { sections.first.map { $0.id + "-header" } }
+    /// First grid row, ID'd the same way as `items` — selecting into it restores the origin instead, so its header shows.
     private var firstRowID: String? { sections.first.map { $0.id + "-row-0" } }
 
     var body: some View {
@@ -136,20 +121,21 @@ struct EmojiGridView: View {
                 .padding(.top, Theme.Spacing.xs)
                 .padding(.bottom, Theme.Spacing.md)
                 .hideNativeScrollers()
+                .scrollOriginAnchor()
             }
             .edgeDissolve()
             .thinScrollbar()
             .onChange(of: scroll) { _, scroll in
                 switch scroll.kind {
                 case .top:
-                    if let firstItemID { proxy.scrollTo(firstItemID, anchor: .top) }
+                    proxy.scrollToOrigin()
                 case .follow:
                     guard let selectedRowID else { return }
-                    // On the first row, snap to the top so its header shows too — a nil anchor won't, since the row is already visible.
-                    if selectedRowID == firstRowID, let firstItemID {
-                        proxy.scrollTo(firstItemID, anchor: .top)
+                    // On the first row, snap to the origin so its header shows too — a nil anchor won't, since the row is already visible.
+                    if selectedRowID == firstRowID {
+                        proxy.scrollToOrigin()
                     } else {
-                        proxy.scrollTo(selectedRowID, anchor: nil)
+                        proxy.reveal(selectedRowID)
                     }
                 }
             }
@@ -254,8 +240,7 @@ private struct EmojiCell: View {
 @MainActor
 enum EmojiActionsMenu {
     static func content(entry: EmojiEntry, core: AppCore, target: PasteTarget?)
-        -> PopoverMenuContent
-    {
+        -> PopoverMenuContent {
         PopoverMenuContent(
             header: entry.displayName,
             items: [
@@ -271,10 +256,10 @@ enum EmojiActionsMenu {
                     core.copyEmoji(entry)
                 },
                 PopoverMenuItem(
-                    title: "Paste & Keep Window Open", icon: .paste(target, fallback: "pin")
+                    title: "Paste & Keep Window Open", icon: .paste(target, fallback: "macwindow")
                 ) {
                     core.pasteEmojiKeepingWindowOpen(entry)
-                },
+                }
             ]
         )
     }

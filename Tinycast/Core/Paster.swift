@@ -2,6 +2,9 @@ import AppKit
 import Carbon.HIToolbox
 
 enum Paster {
+    /// Stamped on Tinycast's own synthetic keystrokes so the snippet keyword tap can skip them.
+    static let tinycastEventTag: Int64 = 0x54494E59
+
     /// Write the item onto the pasteboard and paste it into `previousApp` via a synthetic ⌘V, activating that app so the keystroke lands there. Returns whether content was written (and thus promoted).
     @MainActor @discardableResult
     static func paste(
@@ -30,7 +33,7 @@ enum Paster {
         pb.setString(text, forType: .string)
     }
 
-    /// String counterpart of `paste(_:store:previousApp:)` — marker-stamped so pasted emoji don't re-enter clipboard history.
+    /// String counterpart of `paste(_:store:previousApp:)` — marker-stamped so pasted text doesn't re-enter clipboard history.
     @MainActor
     static func pasteString(_ text: String, previousApp: NSRunningApplication?) {
         writeString(text)
@@ -103,22 +106,27 @@ enum Paster {
         return true
     }
 
-    /// Synthesize ⌘V — delivered to `pid` alone when given, otherwise through the system tap to whatever is frontmost.
+    /// Synthesize ⌘V — delivered to `pid` alone when given, otherwise through the system tap to whatever is frontmost. Shared with `SnippetTextInjector`, which pastes long snippet text the same way.
     @MainActor
-    private static func postCommandV(toPid pid: pid_t? = nil) {
+    static func postCommandV(toPid pid: pid_t? = nil) {
         guard Permissions.ensureAccessibility() else { return }
         let source = CGEventSource(stateID: .combinedSessionState)
+
         let v = CGKeyCode(kVK_ANSI_V)
-        let down = CGEvent(keyboardEventSource: source, virtualKey: v, keyDown: true)
-        let up = CGEvent(keyboardEventSource: source, virtualKey: v, keyDown: false)
-        down?.flags = .maskCommand
-        up?.flags = .maskCommand
+        guard let down = CGEvent(keyboardEventSource: source, virtualKey: v, keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: v, keyDown: false) else { return }
+
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.setIntegerValueField(.eventSourceUserData, value: tinycastEventTag)
+        up.setIntegerValueField(.eventSourceUserData, value: tinycastEventTag)
+
         if let pid {
-            down?.postToPid(pid)
-            up?.postToPid(pid)
+            down.postToPid(pid)
+            up.postToPid(pid)
         } else {
-            down?.post(tap: .cghidEventTap)
-            up?.post(tap: .cghidEventTap)
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
         }
     }
 }

@@ -16,7 +16,7 @@ enum PopoverMenuIcon: Equatable {
 struct PopoverMenuItem {
     let title: String
     let icon: PopoverMenuIcon
-    var shortcut: String? = nil
+    var shortcut: String?
     /// Destructive rows (delete) tint their icon + label red, matching the native menu convention.
     var isDestructive: Bool = false
     let action: () -> Void
@@ -44,13 +44,13 @@ struct PopoverMenuItem {
 
 /// A popover menu's header + rows, built once per feature and consumed by both the render path and `RootPaletteView`'s keyboard handlers.
 struct PopoverMenuContent {
-    var header: String? = nil
+    var header: String?
     let items: [PopoverMenuItem]
 }
 
 /// In-window overlay menu (not a system popover), anchored to a bottom corner so it stays clipped inside the palette, with a stock Liquid Glass surface. Data-driven so `selection` can highlight a row for keyboard navigation; `onActivate(index)` is the single path fired by both a click and Return.
 struct PopoverMenu: View {
-    var header: String? = nil
+    var header: String?
     let items: [PopoverMenuItem]
     @Binding var selection: Int
     let onActivate: (Int) -> Void

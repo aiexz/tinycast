@@ -12,7 +12,7 @@ final class ClipboardManager {
     static let sensitiveTypes: Set<NSPasteboard.PasteboardType> = [
         .init("org.nspasteboard.ConcealedType"),
         .init("org.nspasteboard.TransientType"),
-        .init("com.apple.is-sensitive"),
+        .init("com.apple.is-sensitive")
     ]
 
     private let store: ClipboardStore
@@ -39,6 +39,17 @@ final class ClipboardManager {
         self.timer = timer
     }
 
+    // Drains the pending change first: the user's real copy has to reach history before our temporary text overwrites the pasteboard.
+    func prepareForTinycastPasteboardMutation() {
+        poll()
+    }
+
+    // The guard is load-bearing: a foreign write that landed after ours leaves the count mismatched, and skipping the assignment keeps that write capturable by the next poll.
+    func synchronizeAfterTinycastPasteboardMutation(changeCount: Int) {
+        guard NSPasteboard.general.changeCount == changeCount else { return }
+        lastChangeCount = changeCount
+    }
+
     private func poll() {
         let pb = NSPasteboard.general
         guard pb.changeCount != lastChangeCount else { return }
@@ -54,8 +65,7 @@ final class ClipboardManager {
         if let sourceBundleID, settings.clipboardDisabledApps.contains(sourceBundleID) { return }
 
         if let text = pb.string(forType: .string),
-            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
+            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             guard text.count <= Self.maxTextLength else { return }
             store.addText(text, sourceBundleID: sourceBundleID)
             return

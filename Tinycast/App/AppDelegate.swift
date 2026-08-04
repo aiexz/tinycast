@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the Hyper Key back: that HID-level caps remap outlives the process. Order matters across both.
         AppCore.shared.prepareForTermination()
         // The Hyper Key's HID-level caps remap outlives the process; give the key back.
-        AppCore.shared.hyperKeyTap.prepareForTermination()
+        AppCore.shared.prepareForTermination()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

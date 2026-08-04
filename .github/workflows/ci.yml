@@ -1,23 +1,31 @@
 name: CI
 
+# The job is a merge gate and runs on PRs and on `main`. There is no xcodebuild step: the full Debug
+# build costs minutes and the release workflow already builds before it ships, so CI keeps to the one
+# check that finishes in about a minute — the Tools/ harnesses (the test suite, since there is no
+# XCTest target; see AGENTS.md).
 on:
+  pull_request:
   push:
     branches: [main]
-  pull_request:
+
+# A new push supersedes the previous run for the same ref.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-test:
+  test:
     runs-on: macos-26
-    defaults:
-      run:
-        shell: bash
-
     steps:
       - uses: actions/checkout@v7
 
       - name: Select Xcode 26
         run: |
-          set -euo pipefail
+
           XCODE_PATH="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -n1)"
           if [ -z "$XCODE_PATH" ]; then
             echo "::error::No Xcode 26.x found on this runner. Installed Xcodes:"
@@ -27,30 +35,53 @@ jobs:
           echo "Using $XCODE_PATH"
           echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> "$GITHUB_ENV"
 
-      - name: Build Tinycast (Debug)
+      - name: Run Tools/ harnesses
         run: |
           set -euo pipefail
-          xcodebuild -project Tinycast.xcodeproj -scheme Tinycast -configuration Debug \
-            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
-            build
-
-      - name: Fuzz matcher harness
-        run: swift Tools/fuzz-test.swift
-
-      - name: Calculator engine harness
-        run: |
-          set -euo pipefail
-          swiftc Tinycast/Core/Calculator/*.swift Tools/calc-test.swift -o "$RUNNER_TEMP/calc-test"
-          "$RUNNER_TEMP/calc-test"
-
-      - name: Emoji catalog + grid harness
-        run: |
-          set -euo pipefail
-          swiftc \
-            Tinycast/Core/Emoji/EmojiCatalog.swift \
-            Tinycast/Core/Emoji/EmojiGridGeometry.swift \
-            Tinycast/Core/Emoji/EmojiData.generated.swift \
-            Tools/emoji-test.swift \
-            -o "$RUNNER_TEMP/emoji-test"
-          "$RUNNER_TEMP/emoji-test"
+          swiftc -swift-version 6 Tinycast/Core/SearchRelevance.swift Tools/fuzz-test.swift \
+            -o /tmp/fuzz-test && /tmp/fuzz-test
+          swiftc -swift-version 6 Tinycast/Core/SearchRelevance.swift \
+            Tinycast/Core/LauncherRankingStore.swift Tools/ranking-test.swift \
+            -o /tmp/ranking-test && /tmp/ranking-test
+          swiftc Tinycast/Core/Calculator/*.swift Tools/calc-test.swift \
+            -o /tmp/calc-test && /tmp/calc-test
+          swiftc -swift-version 6 Tinycast/Core/ClipboardStore.swift Tools/clipboard-test.swift \
+            -o /tmp/clipboard-test && /tmp/clipboard-test
+          swiftc -swift-version 6 Tinycast/Core/SearchScopes.swift Tools/scopes-test.swift \
+            -o /tmp/scopes-test && /tmp/scopes-test
+          swiftc -swift-version 6 Tinycast/Core/Backup/RaycastFormat.swift \
+            Tinycast/Core/Backup/RaycastV1Decoder.swift Tinycast/Core/Backup/Gunzip.swift \
+            Tinycast/Core/ClipboardStore.swift Tools/raycast-test.swift \
+            -o /tmp/raycast-test && /tmp/raycast-test
+          swiftc Tinycast/Core/Emoji/EmojiCatalog.swift Tinycast/Core/Emoji/EmojiGridGeometry.swift \
+            Tinycast/Core/Emoji/EmojiData.generated.swift Tools/emoji-test.swift \
+            -o /tmp/emoji-test && /tmp/emoji-test
+          swiftc -swift-version 6 Tinycast/Core/CustomCommand.swift \
+            Tinycast/Core/ShellCommandRunner.swift Tools/custom-command-test.swift \
+            -o /tmp/custom-command-test && /tmp/custom-command-test
+          swiftc -swift-version 6 Tinycast/Core/NotificationToken.swift \
+            Tinycast/Core/Snippets/*.swift \
+            Tools/snippets-test.swift -o /tmp/snippets-test && /tmp/snippets-test
+          swiftc -swift-version 6 Tinycast/Core/HotKey/DoubleTapModifier.swift \
+            Tinycast/Core/HotKey/DoubleTapDetector.swift Tools/hotkey-test.swift \
+            -o /tmp/hotkey-test && /tmp/hotkey-test
+          swiftc -swift-version 6 Tinycast/Core/Theme.swift \
+            Tinycast/Core/CalloutPlacement.swift Tools/callout-test.swift \
+            -o /tmp/callout-test && /tmp/callout-test
+          swiftc -swift-version 6 Tinycast/Core/SystemAction.swift Tools/system-action-test.swift \
+            -o /tmp/system-action-test && /tmp/system-action-test
+          swiftc -swift-version 6 Tinycast/Core/WindowManagement/WindowCommand.swift \
+            Tinycast/Core/WindowManagement/WindowLayout.swift \
+            Tinycast/Core/WindowManagement/WindowActionMemory.swift Tools/window-command-test.swift \
+            -o /tmp/window-command-test && /tmp/window-command-test
+          swiftc -swift-version 6 Tinycast/Core/Uninstall/UninstallTarget.swift \
+            Tinycast/Core/Uninstall/UninstallSearchRoot.swift \
+            Tinycast/Core/Uninstall/UninstallRules.swift \
+            Tinycast/Core/Uninstall/UninstallProtection.swift \
+            Tinycast/Core/Uninstall/UninstallPlan.swift Tools/uninstall-test.swift \
+            -o /tmp/uninstall-test && /tmp/uninstall-test
+          swiftc -swift-version 6 Tinycast/Core/Quicklinks/Quicklink.swift \
+            Tinycast/Core/Quicklinks/QuicklinkDestination.swift \
+            Tinycast/Core/Quicklinks/QuicklinkStore.swift \
+            Tinycast/Core/Quicklinks/QuicklinkArchive.swift Tools/quicklink-test.swift \
+            -o /tmp/quicklink-test && /tmp/quicklink-test

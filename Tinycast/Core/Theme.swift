@@ -25,6 +25,8 @@ enum Theme {
         /// Hover highlight behind a popover menu row.
         static let menuRow: CGFloat = 10
         static let menuPanel: CGFloat = 16
+        /// Tinycast's own dialog / HUD surface, sized between `menuPanel` and `panel`, so a dialog reads as a smaller sibling of the palette rather than a second palette.
+        static let dialog: CGFloat = 20
         static let thumbnail: CGFloat = 6
         static let card: CGFloat = 10
         static let keyCap: CGFloat = 6
@@ -49,7 +51,27 @@ enum Theme {
         static let keyCap: CGFloat = 18
         /// Settings shortcut-recorder keycap — smaller than the palette's `keyCap` chip.
         static let recorderKeyCap: CGFloat = 16
+        /// Fixed so the recorder can't resize as its binding changes.
+        static let shortcutRecorder: CGFloat = 120
+        /// One text line in the recorder callout.
+        static let shortcutPopoverLine: CGFloat = 14
+        /// Summed from the bands the body lays out, so placement needs no measuring. The width is
+        /// load-bearing: it must stay under twice a recorder's inset from the pane edge, or the
+        /// callout clamps and the caret stops being centred. `Tools/callout-test.swift` pins that.
+        static let shortcutPopover = CGSize(
+            width: 132,
+            height: Spacing.sm * 2 + heroKeyCap + Spacing.sm + shortcutPopoverLine + Spacing.sm
+                + compactKeyCap + calloutCaretHeight)
+        /// The callout's pointer: a triangle with a rounded tip.
+        static let calloutCaretWidth: CGFloat = 15
+        static let calloutCaretHeight: CGFloat = 7
+        static let calloutCaretTip: CGFloat = 2.5
+        /// Keycaps: `compact` for a hint, `keyCap` as standard, `hero` where the cap is the content.
+        static let compactKeyCap: CGFloat = 15
+        static let heroKeyCap: CGFloat = 22
         static let menuButton: CGFloat = 36
+        /// The uninstall list's leading checkbox / lock glyph.
+        static let checkbox: CGFloat = 16
         static let clipboardListWidth: CGFloat = 290
         static let emojiCell: CGFloat = 56
         static let menuWidth: CGFloat = 276
@@ -60,6 +82,41 @@ enum Theme {
         static let settingsRowIcon: CGFloat = 20
         /// Little state indicator dot next to a settings row title (Hyper Key active/needs-permission).
         static let statusDot: CGFloat = 6
+        /// Settings editor modals (Custom Commands, Snippets): fixed width, intrinsic height.
+        static let editorSheetWidth: CGFloat = 480
+        /// The multi-line text box inside those modals (shell command, snippet template) — it scrolls internally rather than growing the sheet.
+        static let editorTextHeight: CGFloat = 120
+        /// Field column in the snippet argument prompt. At or below 220 the alert keeps its natural 260pt width, so its buttons sit exactly where every other alert's do.
+        static let argumentPromptWidth: CGFloat = 220
+        /// Confirmation HUD: it sizes to its message, up to this ceiling, and sits this far above the bottom of the screen.
+        static let hudMaxWidth: CGFloat = 420
+        static let hudEdgeOffset: CGFloat = 48
+        /// Tinycast's own dialog: fixed width, height measured from the SwiftUI content.
+        static let dialogWidth: CGFloat = 420
+        /// Leading glyph on a dialog, larger than a row icon because it carries the subject the dialog is about.
+        static let dialogIcon: CGFloat = 32
+        /// Transient volume HUD shown after any volume or mute command.
+        static let hudWidth: CGFloat = 200
+        static let hudHeight: CGFloat = 100
+        /// Volume slider geometry, shared by the Set Volume dialog and the HUD's read-only bar.
+        static let volumeTrackHeight: CGFloat = 6
+        static let volumeKnob: CGFloat = 16
+        /// Fixed slot for the level readout, so the track can't resize as the number runs 0% → 100%.
+        /// Sized to the widest string it ever holds — "Muted" at 36pt in `rowTrailing` — and no wider,
+        /// since the slack is subtracted straight off the track.
+        static let volumeReadout: CGFloat = 38
+    }
+
+    enum Duration {
+        /// How long each HUD stays on screen. A sentence needs reading time; a level only needs a glance.
+        static let messageHUD: TimeInterval = 2.4
+        static let volumeHUD: TimeInterval = 1.6
+        /// How any borderless surface — dialog or HUD — arrives and leaves. The exit is shorter so a
+        /// confirmed action doesn't feel held up.
+        static let enter: TimeInterval = 0.18
+        static let exit: TimeInterval = 0.12
+        /// Fade-in/out for a hover `Tooltip`.
+        static let tooltip: TimeInterval = 0.15
     }
 
     /// System text styles (not hardcoded sizes) so the UI honors Dynamic Type.
@@ -72,6 +129,9 @@ enum Theme {
         /// The big value line on the calculator answer card (both source and target sides).
         static let calcResult = Font.title
         static let keyCap = Font.caption
+        /// Pair with the matching `Size` for `KeyCapChip.Scale`.
+        static let compactKeyCap = Font.caption2
+        static let heroKeyCap = Font.body
         static let bar = Font.callout.weight(.medium)
         static let menuRow = Font.body
         static let menuShortcut = Font.callout
@@ -98,8 +158,12 @@ enum Theme {
         static let cardStroke = Color.white.opacity(0.10)
         /// Whitish tint layered into the Liquid Glass floating controls (action group + menu circle) so the glass reads frosted rather than clear.
         static let glassFrost = Color.white.opacity(0.05)
-        /// The violet of the app mark. The one non-white hue in the system, used only to tint the About support callout.
+        /// The violet of the app mark, used only to tint the About support callout.
         static let brand = Color(red: 0.525, green: 0.231, blue: 1.0)
+        /// Destructive tint: a destructive button's label, and the leading glyph of a `.danger` dialog.
+        static let destructive = Color.red
+        /// Success tint: the leading glyph of a `.success` dialog.
+        static let success = Color.green
     }
 }
 
@@ -110,8 +174,32 @@ struct KeyCapChip: View {
         case filled
     }
 
+    /// Sanctioned cap sizes, so a bigger or smaller one is a named choice, not a stray frame.
+    enum Scale {
+        case compact
+        case standard
+        case hero
+
+        var side: CGFloat {
+            switch self {
+            case .compact: Theme.Size.compactKeyCap
+            case .standard: Theme.Size.keyCap
+            case .hero: Theme.Size.heroKeyCap
+            }
+        }
+
+        var font: Font {
+            switch self {
+            case .compact: Theme.Typography.compactKeyCap
+            case .standard: Theme.Typography.keyCap
+            case .hero: Theme.Typography.heroKeyCap
+            }
+        }
+    }
+
     let text: String
     var style: Style = .filled
+    var scale: Scale = .standard
 
     /// "↵" is absent from SF Pro and falls back to Lucida Grande UI, which seats it 1.1pt higher in the line box than the SF caps — visibly top-heavy in a chip. Nudging via `offset` is render-only, so the chip keeps the same footprint as every other cap.
     private static let returnGlyphDrop: CGFloat = 1.1
@@ -119,11 +207,11 @@ struct KeyCapChip: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Theme.Radius.keyCap, style: .continuous)
         Text(text)
-            .font(Theme.Typography.keyCap)
+            .font(scale.font)
             .foregroundStyle(Theme.Colors.textSecondary)
             .offset(y: text == "↵" ? Self.returnGlyphDrop : 0)
             .padding(.horizontal, Theme.Spacing.xs)
-            .frame(minWidth: Theme.Size.keyCap, minHeight: Theme.Size.keyCap)
+            .frame(minWidth: scale.side, minHeight: scale.side)
             .background {
                 switch style {
                 case .filled: shape.fill(Theme.Colors.controlSurface)

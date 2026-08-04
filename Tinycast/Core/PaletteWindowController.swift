@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 @MainActor
@@ -61,8 +62,7 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
             core.palette.prepare(mode: .launcher)
             return
         }
-        popToRootTimer = Timer.scheduledTimer(withTimeInterval: timeout.interval, repeats: false) {
-            [weak self] _ in
+        popToRootTimer = Timer.scheduledTimer(withTimeInterval: timeout.interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.popToRootTimer = nil
                 self?.core.palette.prepare(mode: .launcher)
@@ -128,16 +128,49 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
             .environmentObject(core.calendarStore)
             .environmentObject(core.runningApps)
             .environmentObject(core.hotKeys)
+            .environmentObject(core.uninstall)
+            .environmentObject(core.quicklinks)
+            .environmentObject(core.quicklinkArguments)
         let panel = PalettePanel(rootView: root)
         panel.delegate = self
         panel.paletteViewModel = core.palette
         // Backspace in an already-empty search backs out of a sub-screen to a fresh root launcher; `prepare` clears state and re-focuses the field.
         panel.onBareBackspace = { [weak self] in
-            guard let vm = self?.core.palette, vm.mode != .launcher, vm.query.isEmpty else {
+            guard let core = self?.core, core.palette.mode != .launcher, core.palette.query.isEmpty
+            else { return false }
+            // In the argument form it steps back through the answers first, so a typo in the second
+            // of three fields costs one keypress rather than the whole flow.
+            if core.palette.mode == .quicklinkArguments,
+                let previous = core.quicklinkArguments.retreat() {
+                core.palette.query = previous
+                core.palette.selection = 0
+                return true
+            }
+            core.palette.prepare(mode: .launcher)
+            return true
+        }
+        // The field editor swallows some `⌘` chords (e.g. `⌘,`) before SwiftUI `.onKeyPress` can fire, and `LSUIElement` apps have no main menu for `⌘W` or `⌘Esc`. Handle them at the panel level.
+        panel.onCommandShortcut = { [weak self] event in
+            guard let self, !event.isARepeat,
+                event.modifierFlags.intersection([.command, .option, .control, .shift]) == .command
+            else { return false }
+            // Escape has no character, so it matches by key code.
+            if Int(event.keyCode) == kVK_Escape {
+                self.core.palette.prepare(mode: .launcher)
+                return true
+            }
+            // `⌘,` and `⌘W` are character chords like the rest of the palette's (⌘K, ⌘P): matching their QWERTY key codes would fire the wrong action on Dvorak, where the two are transposed.
+            guard let character = event.charactersIgnoringModifiers?.lowercased() else { return false }
+            switch character {
+            case ",":
+                self.core.showSettings()
+                return true
+            case "w":
+                self.core.hidePalette()
+                return true
+            default:
                 return false
             }
-            vm.prepare(mode: .launcher)
-            return true
         }
         self.panel = panel
         return panel
@@ -158,10 +191,18 @@ final class PaletteWindowController: NSObject, NSWindowDelegate {
         panel.setFrame(frame, display: true)
     }
 
-    /// The current session's anchor, resolved from the active screen on first use and cached until hide — so compact and expanded placements can never read a different `visibleFrame`.
+    /// The display to anchor to. `NSScreen.main` is the *key window's* screen, which an accessory app driving a non-activating panel never has — it resolves to the menu-bar display, not the one the user is working on.
+    private func targetScreen() -> NSScreen? {
+        guard core.settings.openOnCursorScreen else { return NSScreen.main }
+        let mouse = NSEvent.mouseLocation
+        // NSMouseInRect, not `contains`: a mouse location falls in the half-open interval `(minY, maxY]`, so `contains` hands a pointer on a display's topmost row to the display stacked above it.
+        return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    }
+
+    /// The current session's anchor, resolved from the target screen on first use and cached until hide — so compact and expanded placements can never read a different `visibleFrame`.
     private func resolveAnchor() -> (x: CGFloat, topEdgeY: CGFloat)? {
         if let anchor { return anchor }
-        guard let screen = NSScreen.main else { return nil }
+        guard let screen = targetScreen() else { return nil }
         let visible = screen.visibleFrame
         let resolved = (
             x: visible.midX - Theme.Size.panelWidth / 2,

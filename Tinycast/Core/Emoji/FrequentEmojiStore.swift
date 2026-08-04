@@ -28,8 +28,7 @@ final class FrequentEmojiStore: ObservableObject {
         fileURL = base.appendingPathComponent("emoji-frequency.json")
 
         if let data = try? Data(contentsOf: fileURL),
-            let decoded = try? JSONDecoder().decode([FrequentEmoji].self, from: data)
-        {
+            let decoded = try? JSONDecoder().decode([FrequentEmoji].self, from: data) {
             records = decoded
         } else {
             records = []

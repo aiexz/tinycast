@@ -30,7 +30,7 @@ enum Scrypt {
         for i in 1...blocks {
             let intBE: [UInt8] = [
                 UInt8((i >> 24) & 0xff), UInt8((i >> 16) & 0xff),
-                UInt8((i >> 8) & 0xff), UInt8(i & 0xff),
+                UInt8((i >> 8) & 0xff), UInt8(i & 0xff)
             ]
             var u = hmac(key: key, data: salt + intBE)
             var t = u

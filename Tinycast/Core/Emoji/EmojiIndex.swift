@@ -6,6 +6,13 @@ final class EmojiIndex: ObservableObject {
     @Published private(set) var entries: [EmojiEntry] = []
     @Published private(set) var categorySections: [(category: EmojiCategory, entries: [EmojiEntry])] = []
 
+    /// `order` is the catalog index, the tie-break that keeps equal scores in catalog order.
+    private struct ScoredEntry {
+        let entry: EmojiEntry
+        let score: Int
+        let order: Int
+    }
+
     private var byGlyph: [String: EmojiEntry] = [:]
     private var searchCache: (query: String, result: [EmojiEntry])?
 
@@ -32,16 +39,15 @@ final class EmojiIndex: ObservableObject {
         if let searchCache, searchCache.query == q { return searchCache.result }
 
         // A keyword hit is penalized just under half a tier so an equal-quality name match always outranks it.
-        var scored: [(entry: EmojiEntry, score: Int, order: Int)] = []
+        var scored: [ScoredEntry] = []
         for (order, entry) in entries.enumerated() {
             let nameScore = FuzzyMatch.score(query: q, candidate: entry.name)
             var best = nameScore
             if !entry.keywords.isEmpty,
-                let keywordScore = FuzzyMatch.score(query: q, candidate: entry.keywords)
-            {
+                let keywordScore = FuzzyMatch.score(query: q, candidate: entry.keywords) {
                 best = max(best ?? Int.min, keywordScore - 500)
             }
-            if let best { scored.append((entry, best, order)) }
+            if let best { scored.append(ScoredEntry(entry: entry, score: best, order: order)) }
         }
         let result = scored
             .sorted { $0.score != $1.score ? $0.score > $1.score : $0.order < $1.order }

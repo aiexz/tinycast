@@ -14,8 +14,7 @@ struct AboutView: View {
     @MainActor private static let appIcon: NSImage = {
         if let name = Bundle.main.infoDictionary?["CFBundleIconFile"] as? String,
             let url = Bundle.main.url(forResource: name, withExtension: "icns"),
-            let image = NSImage(contentsOf: url)
-        {
+            let image = NSImage(contentsOf: url) {
             return image
         }
         return NSApp.applicationIconImage
@@ -137,7 +136,7 @@ private struct AboutLink: Identifiable {
             url: URL(string: "https://x.com/abue_ammar")!),
         AboutLink(
             id: "email", glyph: .symbol("envelope"), title: "Email",
-            detail: "iabueammar@gmail.com", url: URL(string: "mailto:iabueammar@gmail.com")!),
+            detail: "iabueammar@gmail.com", url: URL(string: "mailto:iabueammar@gmail.com")!)
     ]
 }
 

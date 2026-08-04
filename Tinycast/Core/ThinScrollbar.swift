@@ -409,8 +409,7 @@ private struct ScrollbarInteraction: NSViewRepresentable {
             return nil
         }
 
-        private static func firstScrollView(under view: NSView, excluding: NSView?) -> NSScrollView?
-        {
+        private static func firstScrollView(under view: NSView, excluding: NSView?) -> NSScrollView? {
             for sub in view.subviews where sub !== excluding {
                 if let scroll = sub as? NSScrollView { return scroll }
                 if let scroll = firstScrollView(under: sub, excluding: nil) { return scroll }
@@ -428,7 +427,7 @@ private struct ScrollbarInteraction: NSViewRepresentable {
                 NSTrackingArea(
                     rect: .zero,
                     options: [
-                        .mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect,
+                        .mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect
                     ],
                     owner: self
                 ))

@@ -29,8 +29,7 @@ final class CalculatorHistoryStore: ObservableObject {
         fileURL = base.appendingPathComponent("calculator-history.json")
 
         if let data = try? Data(contentsOf: fileURL),
-            let decoded = try? JSONDecoder().decode([CalcHistoryEntry].self, from: data)
-        {
+            let decoded = try? JSONDecoder().decode([CalcHistoryEntry].self, from: data) {
             entries = decoded
         } else {
             entries = []

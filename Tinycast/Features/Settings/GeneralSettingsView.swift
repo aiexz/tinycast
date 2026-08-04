@@ -3,10 +3,10 @@ import SwiftUI
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppCore.shared.settings
     @ObservedObject private var hyperTap = AppCore.shared.hyperKeyTap
+    @ObservedObject private var launcherRanking = AppCore.shared.launcherRanking
     // Same UserDefaults key the `App` binds its `MenuBarExtra(isInserted:)` to — toggling here updates the menu-bar icon live, with no shared observable between them.
     @AppStorage(SettingsKey.showInMenuBar) private var showInMenuBar = true
-    /// Backs the Reset Ranking confirmation dialog (SwiftUI requires a `Bool` source).
-    @State private var showRankingResetConfirm = false
+    @State private var confirmingRankingReset = false
     /// The Hyper modifier chord as prose glyphs, tracking the Include Shift toggle.
     private var hyperGlyphs: String { settings.hyperKeyIncludesShift ? "⌃⌥⇧⌘" : "⌃⌥⌘" }
 
@@ -47,6 +47,22 @@ struct GeneralSettingsView: View {
                     tint: .blue
                 ) {
                     ShortcutRecorder(action: .togglePalette)
+                }
+            }
+
+            SettingsCard(header: "Search") {
+                SettingsRow(
+                    title: "Learned ranking",
+                    subtitle:
+                        "Tinycast privately learns which results you choose for each query. Reset all learned choices to restore the default order.",
+                    systemImage: "chart.line.uptrend.xyaxis",
+                    tint: .blue
+                ) {
+                    Button("Reset…", role: .destructive) {
+                        confirmingRankingReset = true
+                    }
+                    .controlSize(.small)
+                    .disabled(launcherRanking.isEmpty)
                 }
             }
 
@@ -137,7 +153,8 @@ struct GeneralSettingsView: View {
                 SettingsDivider()
                 SettingsRow(
                     title: "Show favorites in compact mode",
-                    subtitle: "Pin favorite app icons to the right of the compact bar (⌘1–⌘5 to launch).",
+                    subtitle:
+                        "Pin favorite app icons to the right of the compact bar (⌘1–⌘5 to launch).",
                     systemImage: "star",
                     tint: .yellow
                 ) {
@@ -148,6 +165,19 @@ struct GeneralSettingsView: View {
                         .disabled(!settings.compactMode)
                 }
                 .opacity(settings.compactMode ? 1 : 0.5)
+                SettingsDivider()
+                SettingsRow(
+                    title: "Follow the cursor across displays",
+                    subtitle:
+                        "Open the launcher on whichever display the pointer is on, rather than the one with the menu bar.",
+                    systemImage: "display.2",
+                    tint: .teal
+                ) {
+                    Toggle("", isOn: $settings.openOnCursorScreen)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+                }
             }
 
             SettingsCard(header: "General") {
@@ -193,7 +223,8 @@ struct GeneralSettingsView: View {
                 SettingsDivider()
                 SettingsRow(
                     title: "Welcome Guide",
-                    subtitle: "Re-run the first-launch setup: shortcut, permissions, and Raycast import.",
+                    subtitle:
+                        "Re-run the first-launch setup: shortcut, permissions, and Raycast import.",
                     systemImage: "sparkles",
                     tint: .yellow
                 ) {
@@ -298,6 +329,18 @@ struct GeneralSettingsView: View {
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            "Reset learned launcher ranking?",
+            isPresented: $confirmingRankingReset,
+            titleVisibility: .visible
+        ) {
+            Button("Reset Ranking", role: .destructive) {
+                launcherRanking.resetAll()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Tinycast will relearn your preferred results as you use the launcher.")
         }
     }
 }

@@ -59,7 +59,7 @@ struct EdgeDissolveMask: ViewModifier {
             .init(color: .black, location: topFade / height),
             .init(color: .black, location: 1 - bottomFade / height),
             .init(color: .black.opacity(bottomAlpha), location: 1 - bottomFade / 2 / height),
-            .init(color: .black.opacity(0), location: 1),
+            .init(color: .black.opacity(0), location: 1)
         ]
     }
 }

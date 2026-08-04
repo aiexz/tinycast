@@ -12,6 +12,21 @@ enum AppLauncher {
         NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 
+    /// No AppKit route for Get Info, so this drives Finder over Apple events — the first use raises the Automation prompt.
+    @MainActor
+    static func showInfoInFinder(_ url: URL) -> Bool {
+        let source = """
+            tell application "Finder"
+                activate
+                open information window of (POSIX file "\(url.path)" as alias)
+            end tell
+            """
+        guard let script = NSAppleScript(source: source) else { return false }
+        var errorInfo: NSDictionary?
+        script.executeAndReturnError(&errorInfo)
+        return errorInfo == nil
+    }
+
     /// Opens System Settings at the pane backed by the given extension bundle ID.
     @MainActor
     static func openSettingsPane(bundleID: String) {
@@ -29,8 +44,7 @@ enum AppLauncher {
             return
         }
         if let url = running?.bundleURL
-            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
-        {
+            ?? NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) {
             // Dock-click semantics: activates, raises, unhides, and reopens a window — none of which a bare `activate()` reliably does under cooperative activation (macOS 14+).
             NSWorkspace.shared.openApplication(
                 at: url, configuration: NSWorkspace.OpenConfiguration())

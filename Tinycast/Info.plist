@@ -26,10 +26,10 @@
 	<true/>
 	<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key>
 	<true/>
-	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Tinycast uses your calendar to show upcoming events and let you join meetings.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Tinycast uses the camera for the live preview.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Tinycast uses automation to perform system actions you explicitly run.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Tinycast uses Bluetooth access only when you run the Toggle Bluetooth action.</string>
 	<key>NSHumanReadableCopyright</key>
 	<string>Tinycast</string>
 </dict>
