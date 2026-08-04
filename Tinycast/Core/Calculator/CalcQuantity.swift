@@ -11,6 +11,11 @@ enum CalcQuantity {
             return nil
         }
 
+        // Decline simple [number, ident] / [ident, number] sources with no explicit target — these belong to the currency/unit auto-converters, not typed arithmetic. Preserve standalone when explicitly asked (partial results).
+        if !preserveStandaloneUnit, split.targetName == nil,
+            isSimpleConversionSource(split.expressionTokens) {
+            return nil
+        }
 
         var parser = QuantityParser(tokens: split.expressionTokens, currency: currency)
         guard let value = parser.parse() else {
@@ -23,12 +28,12 @@ enum CalcQuantity {
             switch currency {
             case .off:
                 return nil
-            case .on(nil):
+            case .on(nil, _):
                 return CalcResult(
                     expression: query,
                     payload: .error(
                         message: "Exchange rates unavailable — check your connection."))
-            case .on(let rates?):
+            case .on(let rates?, _):
                 if let code = parser.currencyCodes.first(where: { rates.rate(for: $0) == nil }) {
                     return CalcResult(
                         expression: query,
@@ -97,7 +102,7 @@ enum CalcQuantity {
             }
             return nil
         case .currency(let from):
-            if case .on(let rates) = currency, let to = CalcCurrency.byName[targetName] {
+            if case .on(let rates, _) = currency, let to = CalcCurrency.byName[targetName] {
                 guard let rates else {
                     return CalcResult(
                         expression: query,
@@ -576,7 +581,7 @@ private struct QuantityParser {
     ) -> Double? {
         recordCurrency(from.code)
         recordCurrency(to.code)
-        guard case .on(let rates) = currency else { return nil }
+        guard case .on(let rates, _) = currency else { return nil }
         guard let rates else {
             issue = "Exchange rates unavailable — check your connection."
             return nil

@@ -202,7 +202,15 @@ enum CalcParser {
     fileprivate static let functions: [String: @Sendable (Double) -> Double] = [
         "sqrt": { sqrt($0) }, "log": { log10($0) }, "ln": { log($0) }, "sin": { sin($0) },
         "cos": { cos($0) }, "tan": { tan($0) }, "abs": { abs($0) }, "floor": { floor($0) },
-        "ceil": { ceil($0) }, "round": { $0.rounded() }
+        "ceil": { ceil($0) }, "round": { $0.rounded() },
+        // Advanced trig
+        "cot": { 1 / tan($0) }, "csc": { 1 / sin($0) }, "sec": { 1 / cos($0) },
+        // Inverse trig
+        "asin": { asin($0) }, "acos": { acos($0) }, "atan": { atan($0) },
+        // Hyperbolic
+        "sinh": { sinh($0) }, "cosh": { cosh($0) }, "tanh": { tanh($0) },
+        // Inverse hyperbolic
+        "asinh": { asinh($0) }, "acosh": { acosh($0) }, "atanh": { atanh($0) }
     ]
 
     fileprivate static let constants: [String: Double] = ["pi": .pi, "π": .pi, "e": M_E]
@@ -291,6 +299,8 @@ private struct Parser {
             return BinaryOp(op: "%", bindingPower: Self.mulBP, rightBindingPower: Self.mulBP + 1)
         case .op("^"):
             return BinaryOp(op: "^", bindingPower: 30, rightBindingPower: 30)  // right-associative: 2^3^2 = 512
+        case .ident("power"):
+            return BinaryOp(op: "^", bindingPower: 30, rightBindingPower: 30)  // natural-language: "2 power 10"
         default: return nil
         }
     }
