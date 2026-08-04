@@ -167,17 +167,34 @@ enum CalcQuantity {
     private static func splitConversion(
         _ tokens: [CalcToken]
     ) -> (expressionTokens: [CalcToken], targetName: String?) {
-        guard tokens.count >= 3, CalcUnits.isConnector(tokens[tokens.count - 2]),
+        if tokens.count >= 3, CalcUnits.isConnector(tokens[tokens.count - 2]),
             case .ident(let targetName) = tokens[tokens.count - 1]
-        else { return (tokens, nil) }
-
-        var depth = 0
-        for token in tokens.dropLast(2) {
-            if case .op("(") = token { depth += 1 }
-            if case .op(")") = token { depth -= 1 }
+        {
+            var depth = 0
+            for token in tokens.dropLast(2) {
+                if case .op("(") = token { depth += 1 }
+                if case .op(")") = token { depth -= 1 }
+            }
+            if depth == 0 { return (Array(tokens.dropLast(2)), targetName) }
         }
-        guard depth == 0 else { return (tokens, nil) }
-        return (Array(tokens.dropLast(2)), targetName)
+
+        // No-connector currency target inside a larger expression: `100 usd rub / 100` means
+        // convert the USD-valued expression to RUB, then keep evaluating the remaining operators.
+        // The source must be a numeric currency operand and both adjacent identifiers must be known
+        // currencies, so ordinary arithmetic such as `5 eur + 5 usd` is unaffected.
+        guard tokens.count >= 4 else { return (tokens, nil) }
+        for sourceIndex in 1..<(tokens.count - 1) {
+            guard case .ident(let sourceName) = tokens[sourceIndex],
+                CalcCurrency.byName[sourceName] != nil,
+                numberValue(tokens[sourceIndex - 1]) != nil,
+                case .ident(let targetName) = tokens[sourceIndex + 1],
+                CalcCurrency.byName[targetName] != nil
+            else { continue }
+            var expressionTokens = tokens
+            expressionTokens.remove(at: sourceIndex + 1)
+            return (expressionTokens, targetName)
+        }
+        return (tokens, nil)
     }
 
     private static func isSimpleConversionSource(_ tokens: [CalcToken]) -> Bool {
