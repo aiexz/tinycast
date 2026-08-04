@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class HotKeyManager: ObservableObject {
     var onTogglePalette: (() -> Void)?
+    var onToggleApp: ((String) -> Void)?
     var onToggleClipboard: (() -> Void)?
     var onToggleEmoji: (() -> Void)?
     var onRunCustomCommand: ((UUID) -> Void)?

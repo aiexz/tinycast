@@ -10,6 +10,7 @@ enum CalcMemo {
         let query: String
         let enabled: Bool
         let stamp: Date?
+        let target: String?
         let result: CalcResult?
     }
 
@@ -35,7 +36,7 @@ enum CalcMemo {
             return cache.result
         }
         let result = CalcEngine.evaluate(query, currency: currency)
-        cache = Cache(query: query, enabled: enabled, stamp: stamp, result: result)
+        cache = Cache(query: query, enabled: enabled, stamp: stamp, target: target, result: result)
         return result
     }
 }

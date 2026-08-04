@@ -7,6 +7,18 @@ enum PaletteMode: String, CaseIterable, Identifiable {
     case clipboard
     case calculatorHistory
     case emoji
+    case calendar
+    // System command modes that render inside the palette (Tinycast/Features/System/SystemCommandViews),
+    // matching the Raycast Microphone + Coffee command surface. The no-view immediate actions
+    // (Caffeinate/Decaffeinate/Toggle Microphone/Toggle Caffeination) stay plain commands; the five
+    // below take an arg the launcher can't carry, so they switch the palette into these modes.
+    case setMicrophoneLevel
+    case caffeinateFor
+    case caffeinateUntil
+    case caffeinateWhile
+    // Live camera feed rendered inside the palette (Tinycast/Features/Camera/CameraPreviewView);
+    // the preview ignores search input, so its placeholder is a harmless empty sentinel.
+    case cameraPreview
     case uninstall
     case quicklinks
     /// Collects a quicklink's `{argument}` values before it opens; the pending request lives on
@@ -19,6 +31,12 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Clipboard"
         case .calculatorHistory: return "Calculator History"
         case .emoji: return "Emoji & Symbols"
+        case .calendar: return "My Schedule"
+        case .setMicrophoneLevel: return "Microphone"
+        case .caffeinateFor: return "Caffeinate for"
+        case .caffeinateUntil: return "Caffeinate Until"
+        case .caffeinateWhile: return "Caffeinate While"
+        case .cameraPreview: return "Camera Preview"
         case .uninstall: return "Uninstall Application"
         case .quicklinks: return "Quicklinks"
         case .quicklinkArguments: return "Open Quicklink"
@@ -30,6 +48,12 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "doc.on.doc"
         case .calculatorHistory: return "plus.forwardslash.minus"
         case .emoji: return "face.smiling"
+        case .calendar: return "calendar"
+        case .setMicrophoneLevel: return "microphone"
+        case .caffeinateFor: return "timer"
+        case .caffeinateUntil: return "clock.badge.checkmark"
+        case .caffeinateWhile: return "macwindow"
+        case .cameraPreview: return "video"
         case .uninstall: return "trash"
         case .quicklinks, .quicklinkArguments: return Quicklink.sfSymbol
         }
@@ -40,6 +64,12 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .clipboard: return "Type to filter entries…"
         case .calculatorHistory: return "Do math, convert units, or search your past calculations…"
         case .emoji: return "Search emoji and symbols…"
+        case .calendar: return "Search events…"
+        case .setMicrophoneLevel: return "Set the microphone input level…"
+        case .caffeinateFor: return "Keep awake for a duration, e.g. 5m, 2h…"
+        case .caffeinateUntil: return "Keep awake until a time or date, e.g. 9am, 5pm, april 9…"
+        case .caffeinateWhile: return "Pick an app to keep the Mac awake while it's running…"
+        case .cameraPreview: return ""
         case .uninstall: return "Filter files and folders by name…"
         case .quicklinks: return "Search quicklinks…"
         // Replaced by the pending argument's name; only reached if the session vanished mid-render.
@@ -122,6 +152,13 @@ final class AppCore: ObservableObject {
     let calcHistory = CalculatorHistoryStore()
     let currencyRates = CurrencyRateStore()
     let emojiIndex = EmojiIndex()
+    let calendarStore: CalendarStore
+    let microphoneController = MicrophoneController()
+    let caffeinationController = CaffeinationController()
+    let lowPowerController = LowPowerController()
+    lazy var systemStatusItems = SystemStatusItems(
+        microphone: microphoneController,
+        caffeination: caffeinationController)
     let frequentEmoji = FrequentEmojiStore()
     let runningApps = RunningAppsMonitor()
     let appUsage = AppUsageStore()
@@ -147,6 +184,7 @@ final class AppCore: ObservableObject {
         let settings = AppSettings()
         self.launcherRanking = launcherRanking
         self.settings = settings
+        calendarStore = CalendarStore(settings: settings)
         appIndex = AppIndex(ranking: launcherRanking)
         let clipboardManager = ClipboardManager(store: clipboardStore, settings: settings)
         self.clipboardManager = clipboardManager
@@ -274,20 +312,17 @@ final class AppCore: ObservableObject {
             showOnboarding()
         }
     }
-    /// Tear down child processes and menu-bar artifacts before the app exits; called from `AppDelegate.applicationWillTerminate` alongside the existing `hyperKeyTap` cleanup. Order matters: terminate the caffeinate child *before* removing the status items so the menu-bar indicator never flashes a stale asserting state, and never `killall caffeinate` — only the process this app owns is touched.
-    func prepareForTermination() {
-        caffeinationController.prepareForTermination()
-        systemStatusItems.stop()
-        lowPowerController.stop()
-    }
-
-
+    /// Tear down every process, tap, watcher and menu-bar artifact before the app exits.
     func prepareForTermination() {
         // Caps Lock first: its HID remap is the only teardown that outlives the process, so nothing else may come before it.
         hyperKeyTap.prepareForTermination()
         snippetTextInjector.prepareForTermination()
         snippetListener.stop()
         snippetsStore.stop()
+        // Only terminate the caffeinate child this app owns; never `killall caffeinate`.
+        caffeinationController.prepareForTermination()
+        systemStatusItems.stop()
+        lowPowerController.stop()
     }
 
     // MARK: - Feature switches
@@ -1099,6 +1134,9 @@ final class AppCore: ObservableObject {
             showPalette(mode: .clipboard)
         case .searchEmoji:
             showPalette(mode: .emoji)
+        case .mySchedule:
+            showPalette(mode: .calendar)
+            Task { await calendarStore.requestAccessAndRefresh() }
         case .searchQuicklinks:
             showPalette(mode: .quicklinks)
         case .createQuicklink:
@@ -1125,6 +1163,31 @@ final class AppCore: ObservableObject {
         case .about:
             hidePalette(restoreFocus: false)
             showAbout()
+        case .toggleMicrophone:
+            hidePalette(restoreFocus: false)
+            Task { await microphoneController.toggleMuted() }
+        case .setMicrophoneLevel:
+            showPalette(mode: .setMicrophoneLevel)
+        case .caffeinate:
+            hidePalette(restoreFocus: false)
+            Task { await caffeinationController.caffeinate() }
+        case .decaffeinate:
+            hidePalette(restoreFocus: false)
+            Task { await caffeinationController.decaffeinate() }
+        case .toggleCaffeination:
+            hidePalette(restoreFocus: false)
+            Task { await caffeinationController.toggle() }
+        case .caffeinateFor:
+            showPalette(mode: .caffeinateFor)
+        case .caffeinateUntil:
+            showPalette(mode: .caffeinateUntil)
+        case .caffeinateWhile:
+            showPalette(mode: .caffeinateWhile)
+        case .cameraPreview:
+            showPalette(mode: .cameraPreview)
+        case .toggleLowPower:
+            hidePalette(restoreFocus: false)
+            Task { await lowPowerController.toggle() }
 
         case .quit:
             NSApp.terminate(nil)

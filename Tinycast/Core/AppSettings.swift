@@ -48,6 +48,7 @@ final class AppSettings: ObservableObject {
         static let compactMode = "compactMode"
         static let showFavoritesInCompactMode = "showFavoritesInCompactMode"
         static let searchScopes = "launcherSearchScopes"
+        static let calendarEnabledIDs = "calendarEnabledIDs"
         static let openOnCursorScreen = "openOnCursorScreen"
         static let customCommandsEnabled = "customCommandsEnabled"
         static let customCommandsShowInLauncher = "customCommandsShowInLauncher"
@@ -62,6 +63,11 @@ final class AppSettings: ObservableObject {
         static let quicklinkOpensNewWindow = "quicklinkOpensNewWindow"
         static let quicklinkSelectionFallback = "quicklinkSelectionFallback"
         static let quicklinkConfirmsBeforeDelete = "quicklinkConfirmsBeforeDelete"
+        static let showMicrophoneMenuBar = "showMicrophoneMenuBar"
+        static let showCoffeeMenuBar = "showCoffeeMenuBar"
+        static let micHideIconWhenUnmuted = "micHideIconWhenUnmuted"
+        static let coffeeHideWhenDecaffeinated = "coffeeHideWhenDecaffeinated"
+        static let micMutedTintRed = "micMutedTintRed"
     }
 
     /// Folders (and individual `.app` bundles) `AppIndex` scans, in scan order. Editing this re-indexes — `AppIndex.start(settings:)` observes it.
@@ -124,6 +130,10 @@ final class AppSettings: ObservableObject {
     /// Summon the palette on the display under the pointer instead of the one holding the menu bar.
     @Published var openOnCursorScreen: Bool {
         didSet { defaults.set(openOnCursorScreen, forKey: Key.openOnCursorScreen) }
+    }
+    /// Empty means every EventKit calendar is visible; otherwise contains the selected identifiers.
+    @Published var calendarEnabledIDs: [String] {
+        didSet { defaults.set(calendarEnabledIDs, forKey: Key.calendarEnabledIDs) }
     }
 
     // Feature switches, off out of the box: off means fully off — no launcher entries, no shortcuts, no keyword expansion, no store. `AppCore` observes all four and re-projects.
@@ -197,6 +207,30 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    // Menu-bar indicators (fork): SystemStatusItems observes these to show/hide the mic and coffee items.
+    @Published var showMicrophoneMenuBar: Bool {
+        didSet { defaults.set(showMicrophoneMenuBar, forKey: Key.showMicrophoneMenuBar) }
+    }
+
+    @Published var showCoffeeMenuBar: Bool {
+        didSet { defaults.set(showCoffeeMenuBar, forKey: Key.showCoffeeMenuBar) }
+    }
+
+    /// Only show the mic indicator while muted.
+    @Published var micHideIconWhenUnmuted: Bool {
+        didSet { defaults.set(micHideIconWhenUnmuted, forKey: Key.micHideIconWhenUnmuted) }
+    }
+
+    /// Only show the coffee indicator while a caffeination session is active.
+    @Published var coffeeHideWhenDecaffeinated: Bool {
+        didSet { defaults.set(coffeeHideWhenDecaffeinated, forKey: Key.coffeeHideWhenDecaffeinated) }
+    }
+
+    /// Tint the muted mic indicator red instead of the system warning color.
+    @Published var micMutedTintRed: Bool {
+        didSet { defaults.set(micMutedTintRed, forKey: Key.micMutedTintRed) }
+    }
+
     init() {
         // integer(forKey:) returns 0 when unset, which no case matches — falls through to 3 Months.
         clipboardRetention =
@@ -234,6 +268,7 @@ final class AppSettings: ObservableObject {
         openOnCursorScreen =
             defaults.object(forKey: Key.openOnCursorScreen) == nil
             || defaults.bool(forKey: Key.openOnCursorScreen)
+        calendarEnabledIDs = defaults.stringArray(forKey: Key.calendarEnabledIDs) ?? []
         // The enable switches ship off; the launcher toggles default to true, so absence must be distinguished from a stored `false`.
         customCommandsEnabled = defaults.bool(forKey: Key.customCommandsEnabled)
         customCommandsShowInLauncher =
@@ -261,5 +296,15 @@ final class AppSettings: ObservableObject {
         quicklinkConfirmsBeforeDelete =
             defaults.object(forKey: Key.quicklinkConfirmsBeforeDelete) == nil
             || defaults.bool(forKey: Key.quicklinkConfirmsBeforeDelete)
+        // Menu bar indicators default on, so absence must be distinguished from a stored `false`; hide/tint prefs default off.
+        showMicrophoneMenuBar =
+            defaults.object(forKey: Key.showMicrophoneMenuBar) == nil
+            || defaults.bool(forKey: Key.showMicrophoneMenuBar)
+        showCoffeeMenuBar =
+            defaults.object(forKey: Key.showCoffeeMenuBar) == nil
+            || defaults.bool(forKey: Key.showCoffeeMenuBar)
+        micHideIconWhenUnmuted = defaults.bool(forKey: Key.micHideIconWhenUnmuted)
+        coffeeHideWhenDecaffeinated = defaults.bool(forKey: Key.coffeeHideWhenDecaffeinated)
+        micMutedTintRed = defaults.bool(forKey: Key.micMutedTintRed)
     }
 }

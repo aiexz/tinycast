@@ -13,6 +13,7 @@ struct RootPaletteView: View {
     @EnvironmentObject private var currencyRates: CurrencyRateStore
     @EnvironmentObject private var emojiIndex: EmojiIndex
     @EnvironmentObject private var frequentEmoji: FrequentEmojiStore
+    @EnvironmentObject private var calendarStore: CalendarStore
     @EnvironmentObject private var uninstall: UninstallSession
     @EnvironmentObject private var quicklinks: QuicklinkStore
     @EnvironmentObject private var quicklinkArguments: QuicklinkArgumentSession
@@ -40,10 +41,7 @@ struct RootPaletteView: View {
         return favs.prefix(4).map(CompactFavoriteSlot.app) + [.more]
     }
 
-    /// Ordered launcher results (the single source of truth for list, selection and activation):
-    /// empty query composes favorites first, then `AppUsageStore`'s ranked `Frequently Used`
-    /// prefix (excluding favorite keys so nothing duplicates), then the rest in AppIndex order.
-    /// A non-empty query stays plain fuzzy ranking — section layout never coexists with typing.
+    /// Ordered launcher results (the single source of truth for list, selection and activation): empty query pins favorites to the top, otherwise plain ranked matches.
     private var appResults: [AppEntry] {
         // Visibility filtering stays downstream of `matches` so its one-deep memo cache is never keyed on hidden state; hidden favorites drop out here too.
         let base = appIndex.matches(vm.query).filter(visibility.isVisible)
@@ -53,18 +51,12 @@ struct RootPaletteView: View {
         return favSplit.favorites + usageSplit.ranked + usageSplit.rest
     }
 
-    /// Count of `Frequently Used` rows in `apps` immediately following the favorite block.
-    /// Mirrors the exact `split` call `appResults` runs, on the same inputs, so the count always
-    /// matches the ranked prefix actually laid out (favorites excluded, settings never ranked,
-    /// capped at 5). Re-runs `split` once per render in the launcher-on-empty branch — the same
-    // cost `appResults` already pays, and the operation is bounded by the visible result set.
     private func appUsageRankedCount(apps: [AppEntry], after favoriteCount: Int) -> Int {
         guard favoriteCount < apps.count else { return 0 }
         let rest = Array(apps[favoriteCount..<apps.count])
         let usageSplit = core.appUsage.split(rest, excluding: Set(favorites.keys))
         return min(usageSplit.ranked.count, apps.count - favoriteCount)
     }
-
     private var clipResults: [ClipboardItem] { store.search(vm.query) }
     private var histResults: [CalcHistoryEntry] { calcHistory.search(vm.query) }
     /// The search field filters files by name or location on this screen.
@@ -113,6 +105,10 @@ struct RootPaletteView: View {
         case .uninstall: return uninstallResults.count
         case .quicklinks: return quicklinkResults.count
         case .quicklinkArguments: return argumentOptions.count
+        case .calendar: return calendarResults.count
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil: return 1
+        case .caffeinateWhile: return SystemCommandActions.runningApps.count
+        case .cameraPreview: return 0
         }
     }
     /// Selection clamped into the current results — the single source of truth for highlight, preview and activation so the list and preview can never disagree.
@@ -146,6 +142,9 @@ struct RootPaletteView: View {
     }
     private var selectedEmojiEntry: EmojiEntry? {
         emojiResults.indices.contains(selection) ? emojiResults[selection] : nil
+    }
+    private var selectedCalendarEvent: CalendarEvent? {
+        calendarResults.indices.contains(selection) ? calendarResults[selection] : nil
     }
     private var selectedUninstallCandidate: UninstallCandidate? {
         uninstallResults.indices.contains(selection) ? uninstallResults[selection] : nil
@@ -209,6 +208,11 @@ struct RootPaletteView: View {
         case .quicklinkArguments:
             // The argument form has one action — submit — and it is already ↵.
             return nil
+        case .calendar:
+            guard let event = selectedCalendarEvent else { return nil }
+            return CalendarActionsMenu.content(event: event, store: calendarStore)
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
+            return nil
         }
     }
 
@@ -241,6 +245,7 @@ struct RootPaletteView: View {
         let uninstallRows = vm.mode == .uninstall ? uninstallResults : []
         let links = vm.mode == .quicklinks ? quicklinkResults : []
         let argumentOptions = vm.mode == .quicklinkArguments ? argumentOptions : []
+        let calendarEvents = vm.mode == .calendar ? calendarResults : []
         // Newest stored clip + the reorder token: the pair changes only when the store mutates, never when a query filters the list.
         let clipFollow = ClipFollowKey(id: store.items.first?.id, token: vm.followToken)
         // Every count/selection below derives from this one calc/offset pair — the flat selection index must always match the visible row order, calc card included.
@@ -249,7 +254,7 @@ struct RootPaletteView: View {
         // Only the active mode is non-empty.
         let count =
             apps.count + offset + clips.count + hist.count + emojis.count + uninstallRows.count
-            + links.count + argumentOptions.count
+            + links.count + argumentOptions.count + calendarEvents.count
         let sel = count == 0 ? 0 : min(max(vm.selection, 0), count - 1)
         let calcSelected = calc != nil && sel == 0
         // An error card is selectable but has no action: it must not drive the Copy Answer pill, ⌘K menu, or Enter.
@@ -257,76 +262,73 @@ struct RootPaletteView: View {
         let showSections = vm.mode == .launcher && isQueryEmpty
         let favoriteCount =
             showSections ? apps.prefix(while: { favorites.isFavorite($0) }).count : 0
-        // `appResults` lays out favorites → ranked → rest, so the ranked prefix is the contiguous
-        // band right after favorites. Its count is the only thing LauncherList needs to render a
-        // separate "Frequently Used" section; computing it from `apps` keeps a single render
-        // source of truth (the appResults filter/sort isn't memoized, but this prefix scan runs
-        // only in the launcher-on-empty branch, once per render).
-        let rankedCount = showSections
-            ? appUsageRankedCount(apps: apps, after: favoriteCount) : 0
+        let rankedCount = showSections ? appUsageRankedCount(apps: apps, after: favoriteCount) : 0
         let selectedApp = apps.indices.contains(sel - offset) ? apps[sel - offset] : nil
         // Derive the footer label from the already-resolved selection so `bottomBar` doesn't re-run `appResults` (its filter/sort aren't memoized). The primary/Actions group is hidden when there's nothing to act on: no results in any mode, or an error calc card (selectable but action-less).
         let pillLabel = actionPillLabel(selectedApp: selectedApp, calcActionable: calcActionable)
         // The argument form has no rows to count when its argument takes free text, but ↵ still
         // does something — and the pill is the only thing that says what.
         let showActionGroup =
-            (count > 0 || vm.mode == .quicklinkArguments) && !(calcSelected && !calcActionable)
+            (count > 0 || vm.mode == .quicklinkArguments) && !(calcSelected && !calcActionable) && vm.mode != .cameraPreview
 
         // The `header` (and its single search field) is always attached in the same position via safeAreaInset so its focus survives the compact↔expanded swap — only the results below it toggle. Collapsed shows the bar alone; expanded floats header + action bar over the list with edge-dissolve (see docs/ui.md).
-        return Group {
-            if isCollapsed {
-                Color.clear
-            } else {
-                content(
-                    apps: apps, clips: clips, hist: hist, emojiSections: emojiSections,
-                    uninstallRows: uninstallRows, links: links, argumentOptions: argumentOptions,
-                    calc: calc, selection: sel,
-                    favoriteCount: favoriteCount, showSections: showSections
+        let surface = AnyView(
+            Group {
+                if isCollapsed {
+                    Color.clear
+                } else {
+                    content(
+                        apps: apps, clips: clips, hist: hist, emojiSections: emojiSections,
+                        uninstallRows: uninstallRows, links: links, argumentOptions: argumentOptions,
+                        calendarEvents: calendarEvents, calc: calc, selection: sel,
+                        favoriteCount: favoriteCount, rankedCount: rankedCount, showSections: showSections
+                    )
+                }
+            }
+        .safeAreaInset(edge: .top, spacing: 0) { header }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !isCollapsed {
+                bottomBar(pillLabel: pillLabel, showActionGroup: showActionGroup)
+            }
+        }
+        // Menus are in-window overlays anchored to a bottom corner, so they stay clipped inside the panel — never a system popover spilling outside the window.
+        .overlay {
+            if showAppMenu || showActions {
+                Color.black.opacity(0.001)
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: closeMenus)
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if showAppMenu {
+                let content = appMenuContent
+                PopoverMenu(
+                    header: content.header, items: content.items, selection: $menuSelection,
+                    onActivate: activateMenuItem
                 )
+                .padding(Self.menuInset)
+                .transition(Self.menuTransition(.bottomLeading))
             }
-            .safeAreaInset(edge: .top, spacing: 0) { header }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if !isCollapsed {
-                    bottomBar(pillLabel: pillLabel, showActionGroup: showActionGroup)
-                }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if showActions, let content = actionsContent {
+                PopoverMenu(
+                    header: content.header, items: content.items, selection: $menuSelection,
+                    onActivate: activateMenuItem
+                )
+                .padding(Self.menuInset)
+                .transition(Self.menuTransition(.bottomTrailing))
             }
-            // Menus are in-window overlays anchored to a bottom corner, so they stay clipped inside the panel — never a system popover spilling outside the window.
-            .overlay {
-                if showAppMenu || showActions {
-                    Color.black.opacity(0.001)
-                        .contentShape(Rectangle())
-                        .onTapGesture(perform: closeMenus)
-                }
-            }
-            .overlay(alignment: .bottomLeading) {
-                if showAppMenu {
-                    let content = appMenuContent
-                    PopoverMenu(
-                        header: content.header, items: content.items, selection: $menuSelection,
-                        onActivate: activateMenuItem
-                    )
-                    .padding(Self.menuInset)
-                    .transition(Self.menuTransition(.bottomLeading))
-                }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                if showActions, let content = actionsContent {
-                    PopoverMenu(
-                        header: content.header, items: content.items, selection: $menuSelection,
-                        onActivate: activateMenuItem
-                    )
-                    .padding(Self.menuInset)
-                    .transition(Self.menuTransition(.bottomTrailing))
-                }
-            }
-            // The window's own frame (driven by `PaletteWindowController`) is the size source of truth; filling it keeps the glass background and corner clip matched to the current compact/expanded window height.
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(Color.black.opacity(Theme.Colors.panelDimming))
-            .background(VisualEffectView())
-            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous))
+        }
+        // The window's own frame (driven by `PaletteWindowController`) is the size source of truth; filling it keeps the glass background and corner clip matched to the current compact/expanded window height.
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color.black.opacity(Theme.Colors.panelDimming))
+        .background(VisualEffectView())
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous))
         )
-
-        return surface
+        
+        let observed = AnyView(
+            surface
         // Every show bumps focusToken — refocus search and drop any menu left open from last time (e.g. dismissed by clicking away with a context menu up).
         .onChange(of: vm.focusToken) {
             searchFocused = true
@@ -377,7 +379,10 @@ struct RootPaletteView: View {
         }
         .onAppear { searchFocused = true }
         // Typing/clearing/overflow/settings all flip `paletteIsCollapsed`; resize the window to match.
-        .onChange(of: core.paletteIsCollapsed) { core.syncPaletteSize() }
+            .onChange(of: core.paletteIsCollapsed) { core.syncPaletteSize() }
+        )
+
+        return observed
         // ⌘1–⌘5 launch the compact bar's favorite slots (or expand, for the "…" overflow slot).
         .onKeyPress(keys: ["1", "2", "3", "4", "5"], phases: .down) { press in
             guard isCollapsed, settings.showFavoritesInCompactMode,
@@ -470,6 +475,11 @@ struct RootPaletteView: View {
                 guard command, let app = selectedAppEntry, app.canRevealInFinder
                 else { return .ignored }
                 core.showInFinder(app)
+            case .calendar:
+                guard command, let event = selectedCalendarEvent, event.meetingURL != nil else { return .ignored }
+                calendarStore.join(event)
+            case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
+                return .ignored
             }
             return .handled
         }
@@ -509,7 +519,7 @@ struct RootPaletteView: View {
             case .quicklinks:
                 guard let quicklink = selectedQuicklink else { return .ignored }
                 Task { await core.deleteQuicklink(id: quicklink.id) }
-            case .launcher, .emoji, .uninstall, .quicklinkArguments:
+            case .launcher, .emoji, .uninstall, .quicklinkArguments, .calendar, .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
                 return .ignored
             }
             return .handled
@@ -621,8 +631,8 @@ struct RootPaletteView: View {
     private func content(
         apps: [AppEntry], clips: [ClipboardItem], hist: [CalcHistoryEntry],
         emojiSections: [EmojiGridSection], uninstallRows: [UninstallCandidate],
-        links: [Quicklink], argumentOptions: [String], calc: CalcResult?,
-        selection: Int, favoriteCount: Int, showSections: Bool
+        links: [Quicklink], argumentOptions: [String], calendarEvents: [CalendarEvent], calc: CalcResult?,
+        selection: Int, favoriteCount: Int, rankedCount: Int, showSections: Bool
     ) -> some View {
         switch vm.mode {
         case .launcher:
@@ -792,6 +802,40 @@ struct RootPaletteView: View {
                 onSelect: { vm.selection = $0 },
                 onActivate: activateSelection
             )
+        case .calendar:
+            switch calendarStore.authorizationStatus {
+            case .notDetermined:
+                CalendarPermissionView {
+                    Task { await calendarStore.requestAccessAndRefresh() }
+                }
+            case .fullAccess:
+                if calendarStore.isLoading {
+                    EmptyResults(text: "Loading calendar…")
+                } else if calendarEvents.isEmpty {
+                    EmptyResults(text: isQueryEmpty ? "No upcoming events" : "No matching events")
+                } else {
+                    let selected = calendarEvents.indices.contains(selection) ? calendarEvents[selection] : nil
+                    CalendarScheduleView(
+                        events: calendarEvents,
+                        selectedID: selected?.id,
+                        scrollToken: scroll.nonce,
+                        showsSummary: isQueryEmpty,
+                        onSelect: { event in vm.selection = calendarEvents.firstIndex(of: event) ?? 0 },
+                        onActivate: { calendarStore.openInCalendar($0) },
+                        onActions: { event in
+                            if let index = calendarEvents.firstIndex(of: event) { vm.selection = index }
+                            openActions()
+                        })
+                }
+            case .denied, .restricted, .writeOnly, .authorized:
+                CalendarPermissionView(denied: true) { Permissions.openCalendarSettings() }
+            @unknown default:
+                CalendarPermissionView(denied: true) { Permissions.openCalendarSettings() }
+            }
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile:
+            SystemCommandView(mode: vm.mode, query: vm.query, selection: selection)
+        case .cameraPreview:
+            CameraPreviewView()
         }
     }
 
@@ -865,6 +909,10 @@ struct RootPaletteView: View {
             return "Open Quicklink"
         case .quicklinkArguments:
             return quicklinkArguments.isLastArgument ? "Open Quicklink" : "Next"
+        case .calendar: return "Open in Calendar"
+        case .setMicrophoneLevel: return "Set Level"
+        case .caffeinateFor, .caffeinateUntil, .caffeinateWhile: return "Caffeinate"
+        case .cameraPreview: return ""
         case .launcher:
             if calcActionable { return "Copy Answer" }
             switch selectedApp?.kind {
@@ -895,56 +943,6 @@ struct RootPaletteView: View {
         } else {
             openActions()
         }
-    }
-
-    private func handleModifiedReturn(_ press: KeyPress) -> KeyPress.Result {
-        let command = press.modifiers.contains(.command)
-        let shift = press.modifiers.contains(.shift)
-        let option = press.modifiers.contains(.option)
-        if menuOpen, !command, !option {
-            activateMenuItem(menuSelection)
-            return .handled
-        }
-        guard command || option else { return .ignored }
-        // The selected live calculator card takes precedence over app/history row routing: a single
-        // actionable calc card at flat index 0 carries the manual's three copy shortcuts (↵, handled
-        // by `activateSelection`; ⌘↵ unformatted; ⌘⇧↵ question + answer). Plain ↵ reaches this path
-        // only via the field's onSubmit, never through handleModifiedReturn, so only ⌘ variants land here.
-        if command, let calc = calcActionableResult {
-            if shift {
-                core.copyCalculatorResultWithExpression(calc)
-            } else {
-                core.copyCalculatorResultUnformatted(calc)
-            }
-            return .handled
-        }
-        switch vm.mode {
-        case .emoji:
-            guard emojiResults.indices.contains(selection) else { return .ignored }
-            if command {
-                core.copyEmoji(emojiResults[selection])
-            } else {
-                core.pasteEmojiKeepingWindowOpen(emojiResults[selection])
-            }
-        case .clipboard:
-            guard command, clipResults.indices.contains(selection) else { return .ignored }
-            core.copyToClipboard(clipResults[selection])
-        case .calculatorHistory:
-            let index = selection - calcCount
-            guard command, histResults.indices.contains(index) else { return .ignored }
-            core.copyHistoryExpression(histResults[index])
-        case .launcher:
-            guard command, let app = selectedAppEntry, app.kind == .application,
-                core.runningApps.isRunning(app)
-            else { return .ignored }
-            core.quit(app)
-        case .calendar:
-            guard command, let event = selectedCalendarEvent, event.meetingURL != nil else { return .ignored }
-            calendarStore.join(event)
-        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil, .caffeinateWhile, .cameraPreview:
-            return .ignored
-        }
-        return .handled
     }
 
     private func closeMenus() {
@@ -1046,6 +1044,18 @@ struct RootPaletteView: View {
         case .quicklinks:
             guard quicklinkResults.indices.contains(selection) else { return }
             core.openQuicklink(id: quicklinkResults[selection].id)
+        case .calendar:
+            guard let event = selectedCalendarEvent else { return }
+            calendarStore.openInCalendar(event)
+        case .setMicrophoneLevel, .caffeinateFor, .caffeinateUntil:
+            SystemCommandActions.submit(mode: vm.mode, query: vm.query)
+        case .caffeinateWhile:
+            let apps = SystemCommandActions.runningApps
+            guard apps.indices.contains(selection) else { return }
+            Task { await core.caffeinationController.caffeinateWhileApp(.bundleID(apps[selection].id)) }
+            core.hidePalette(restoreFocus: false)
+        case .cameraPreview:
+            return
         case .quicklinkArguments:
             // An options argument submits the highlighted choice; a free-text one submits the field.
             let options = argumentOptions
