@@ -40,9 +40,9 @@ struct GeneralSettingsView: View {
 
             Section {
                 Toggle(isOn: $settings.showRecommendedApps) {
-                    Text("Show recommended applications")
+                    Text("Show recommended items")
                     Text(
-                        "Show up to five frequently opened applications when the search field is empty."
+                        "Show up to five frequently opened items when the search field is empty."
                     )
                 }
                 LabeledContent("Learned ranking") {

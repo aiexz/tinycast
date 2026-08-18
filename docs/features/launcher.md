@@ -131,11 +131,12 @@ when the bundle's modification date moves, taking later passes to ~0.2 ms. Each 
 the last and keeps only what it looked at, so uninstalled apps fall out instead of accumulating.
 `.appex` Settings panes carry no alternate names, so `SettingsPaneScanner` doesn't ask.
 
-Selecting a launcher result records every prefix of the submitted query, so choosing WhatsApp for
-`wha` also teaches `w` and `wh`. Direct hotkeys and empty-query favorites do not affect learned
-ranking. Learned data stays on device in `launcher-ranking.json`; a result that has learned ranking
-offers a per-item reset in its Actions menu, and users can clear all learned ranking in General
-Settings.
+Every palette activation records overall frecency, and selecting a launcher result also records
+every prefix of the submitted query (so choosing WhatsApp for `wha` teaches `w` and `wh`). Direct
+hotkeys do not affect learned ranking. On an empty query, up to five frequently opened non-favorite
+launcher entries appear in a Recommended section at the top of the list; the General toggle hides it.
+Learned data stays on device in `launcher-ranking.json`; a result that has learned ranking offers a
+per-item reset in its Actions menu, and users can clear all learned ranking in General Settings.
 
 Rankings are memoized one query deep and keyed by the ranking store's revision, so a launch or reset
 invalidates the cached order. `rank` resolves the whole learned table for a query up front via

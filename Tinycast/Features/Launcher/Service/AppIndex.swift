@@ -420,15 +420,16 @@ final class AppIndex {
             guard q.isEmpty else { return base }
             let split = favorites.ordered(base)
             guard showRecommendedApps else { return split.favorites + split.rest }
-            let applications = split.rest.filter { $0.kind == .application }
-            let keys = ranking.recommendedKeys(from: applications.map(\.preferenceKey))
+            let keys = ranking.recommendedKeys(from: split.rest.map(\.preferenceKey))
+            guard !keys.isEmpty else { return split.favorites + split.rest }
+            let entriesByKey = Dictionary(
+                split.rest.map { ($0.preferenceKey, $0) }, uniquingKeysWith: { first, _ in first })
+            let recommended = keys.compactMap { key -> AppEntry? in
+                guard var entry = entriesByKey[key] else { return nil }
+                entry.isRecommended = true
+                return entry
+            }
             let recommendedKeys = Set(keys)
-            let recommended = applications.filter { recommendedKeys.contains($0.preferenceKey) }
-                .map { app in
-                    var app = app
-                    app.isRecommended = true
-                    return app
-                }
             let rest = split.rest.filter { !recommendedKeys.contains($0.preferenceKey) }
             return split.favorites + recommended + rest
         }
