@@ -250,10 +250,17 @@ source, which is the only contract such an extension offers. Lifecycle scripts a
 build script is the contract, a `postinstall` is code nobody asked to run. The package manager is
 `Automatic` by default, which takes the first of pnpm, Bun, Yarn and npm that is installed — a GUI app
 inherits none of a login shell's `PATH`, so `ExtensionPackageManager.searchPaths` is where they are
-looked for, version managers included.
+looked for, version managers included (Homebrew, Volta, asdf, mise, fnm, nvm, Yarn).
 
-Neither the registry list nor the package manager rides a settings backup: one names a tool the
-machine an import lands on may not have, the other is a source of code that will be run.
+That hardcoded list can never cover every toolchain layout — Nix among them — so the Registries sheet
+also has "Custom search paths": a `:`-separated list, `extensionCustomSearchPaths` in `AppSettings`,
+checked *before* the built-in list wherever it resolves a package manager or Node. Set once, it applies
+to every future install; nothing about it needs entering per-install. `ExtensionInstaller` takes it as
+`additionalSearchPaths` rather than reading settings itself, keeping the Model/Service split intact.
+
+Neither the registry list, the package manager, nor the custom search paths ride a settings backup:
+the first two name a tool or a source of code the machine an import lands on may not have or want, and
+the last is a set of paths specific to this Mac's toolchain layout.
 
 ## Shortcuts
 

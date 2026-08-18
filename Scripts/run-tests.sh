@@ -122,6 +122,7 @@ run quicklink-test         Tinycast/Features/Quicklinks/Model/Quicklink.swift \
                            Tinycast/Features/Quicklinks/Model/QuicklinkArchive.swift
 run snippets-test          Tinycast/Platform/NotificationToken.swift \
                            Tinycast/Platform/HealthTicker.swift \
+                           Tinycast/Platform/AccessibilityText.swift \
                            Tinycast/Features/Snippets/Model/*.swift \
                            Tinycast/Features/Snippets/Service/*.swift
 run notes-test             Tinycast/Platform/Signposts.swift \

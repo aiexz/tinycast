@@ -223,6 +223,7 @@ struct ExtensionStoreSheet: View {
                 try await core.extensions.install(
                     listing: listing,
                     packageManager: core.settings.extensionPackageManager,
+                    additionalSearchPaths: core.settings.extensionCustomSearchPaths,
                     onProgress: { progress in
                         Task { @MainActor in installing[listing.id] = progress }
                     })

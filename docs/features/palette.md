@@ -79,7 +79,7 @@ field** — not on a screen of their own. That costs the header its one simple r
 invariants:
 
 - The search field sits at **one structural position, always**. It is never moved inside an `if`:
-  flipping the branch tears down its field editor, which drops first responder mid-navigation. Only
+  flipping the branch tears down its text view, which drops first responder mid-navigation. Only
   its *width* changes — it shrinks to the width of the typed text so the argument chips sit right
   after it, as they do in Raycast.
 - Argument focus is its own `@FocusState`, `argumentFocused`, keyed by argument name. Moving the
@@ -165,25 +165,50 @@ in the half-open interval `(minY, maxY]`: the topmost row is exactly `maxY`, whi
 while that same value is the `minY` of the display stacked above. `contains` would therefore hand a
 pointer parked at the top of one display to its neighbour. `NSMouseInRect` exists for precisely this.
 
-## The placeholder is Tinycast's, not the field's
+## The search field is Tinycast's
 
-The search field is a SwiftUI `TextField` with **no `prompt`**; `RootPaletteView` draws the
-placeholder itself as a leading-aligned background `Text`.
+The search field is **not** a SwiftUI `TextField`. `PaletteSearchField` wraps `PaletteSearchTextView`,
+an `NSTextView` the palette owns outright, and that view draws the query *and* the placeholder.
 
-AppKit gives an `NSTextField` a field editor one point taller than the field (measured: a 24pt editor
-in a 23pt field), and a `prompt` is rendered by whichever of the cell and the editor currently owns
-the text. The same placeholder glyphs therefore sit **one point higher** once the field takes the
-panel's shared field editor. That editor is created lazily and then cached on the window for its
-lifetime, so the step was only ever visible on the first summon after launch — and only where the eye
-could track it, when the outgoing and incoming placeholders share a leading word.
+**Why it is not an `NSTextField`.** An `NSTextField` has two things that draw the same string: the
+cell draws it unfocused, and the window's shared field editor draws it once focus lands. AppKit sizes
+that editor a point taller than the field (measured: a 24pt editor in a 23pt field), and the two paths
+round the baseline differently, so the same glyphs sat **one point higher** while focused. The editor
+is created lazily and then cached on the window, so the step showed only on the first summon after
+launch — and only where the eye could track it, when the outgoing and incoming strings share a leading
+word. A SwiftUI `TextField` is the same machinery, and its field editor is force-cast to a private
+subclass, so a corrected one cannot be vended.
 
-Drawing it in SwiftUI pins it to the layout instead: measured ink is identical in both focus states,
-against a two-backing-pixel step for the real prompt. It is a **background**, not an overlay, so the
-caret still draws over it, and it carries `allowsHitTesting(false)` so clicking the placeholder still
-lands the caret. `PaletteMode.placeholder` is still the one source of the strings; the field takes an
-explicit `accessibilityLabel` because the prompt used to supply it.
+An `NSTextView` **is** its own editor. There is no second renderer, so there is no step to compensate
+for, focused or not. **Do not go back to a `TextField` here**, and do not reintroduce a `prompt:`.
 
-This is the same class of bug as the freeze below — both come from the cell/field-editor swap.
+**The placeholder.** `draw(_:)` renders it when `string` is empty, at `textContainerOrigin` plus the
+container's `lineFragmentPadding` — the exact origin TextKit gives the first real glyph, so the two
+cannot disagree by construction rather than by a tuned constant. It draws under the caret and is not a
+hit target, because it is not a view. `PaletteMode.placeholder` is still the one source of the strings.
+
+**IME composition.** Marked text lands in the view's own storage, so `string` stops being empty the
+moment composition starts and the placeholder goes with it — no overlap with in-flight pinyin or kana.
+`textDidChange` refuses to publish while `hasMarkedText()`, so `PaletteState.query` still changes only
+on commit and a half-typed romanisation never reaches a search.
+
+**Vertical centring** is `textContainerInset.height`, recomputed in `layout()` against the view's own
+bounds. One number, one owner. The field still fills the header row's height so `topDragStrip` meets it
+with no gap.
+
+**`lineFragmentPadding` is `fieldEditorPadding`, not zero.** macOS draws the caret as an
+`NSTextInsertionIndicator` layer 2pt wide **centred** on the insertion point, so a text box flush with
+its clip view loses the caret's left half at column 0 — it renders 1pt until the first glyph pushes it
+clear. AppKit's own `NSTextField` field editor pads by exactly this for the same reason (a bare
+`NSTextView` uses 5). **Do not set it to zero to simplify the placeholder origin**: that origin adds
+the padding back, which is what keeps the two aligned.
+
+**Keys.** `doCommand(by:)` hands ↑ ↓ ← → ↵ ⇥ and Escape to `RootPaletteView.handleSearchKey` first and
+falls through to the caret on `false` — that is what keeps ← and → stepping the emoji grid while they
+stay with the caret everywhere else. The matching `onKeyPress` handlers are still on the root view and
+share the same methods: they serve the inline argument fields, which are SwiftUI's and hold focus
+themselves. `keyDown` records the modifier flags because a selector does not carry the chord that
+produced it.
 
 ## The panel settles the pointer itself
 
@@ -193,22 +218,23 @@ whole window and flickers along the field's edge — the two AppKit mechanisms t
 disagree, and neither yields.
 
 - SwiftUI's `HostingClipView` claims the **arrow** across the entire window as a *cursor rect*.
-- The field editor claims the **I-beam** from its own *tracking area*.
+- The search text view claims the **I-beam** from its own *tracking area*.
 
 Both fire on the same crossings, so the cursor alternates while the pointer is over the field, and the
 last claim simply stays put once it leaves — nothing re-evaluates a cursor rect until the pointer
 crosses one, and the arrow rect spans the window, so leaving the field crosses nothing.
 
-Two measured details the policy depends on:
+One measured detail the policy depends on:
 
 - **The field publishes its own frame.** `RootPaletteView` reports it into `PaletteState.searchFieldFrame`
   via `onGeometryChange`, and the panel does a containment test against that. Hit-testing for the field
   instead does not work: SwiftUI rebuilds it as it re-renders, and a hit test taken mid-rebuild misses
   it and reads as *the pointer left the field*. The frame only moves on layout, so it never lies.
   It arrives top-left-down and is flipped into AppKit's bottom-left-up window space.
-- **The rect is outset by 2pt.** AppKit's field editor is a point taller than the field it serves — the
-  same measurement the placeholder section above rests on — so its I-beam overhangs the published
-  frame. Without the slack that 1pt band is a disagreement, and it flickers.
+
+The rect used to be outset by 2pt, because AppKit's field editor overhung the field it served. The
+owned `NSTextView` is exactly the published frame, so the slack is gone. Do not add it back to paper
+over a cursor flicker — a flicker now means the published frame is wrong.
 
 The policy runs after `super.sendEvent`, so it has the last word, and it writes only when the cursor
 actually differs. It must stay **symmetric**: an earlier version left the field alone and only forced
@@ -227,27 +253,29 @@ where the highlight starts: the first row, except the type filter, which opens o
 ## Menu-open input freeze
 
 While a popover menu (⌘K Actions / app menu / clipboard type filter) is open the search field reads as inert but
-**never resigns first responder** — resigning makes the `NSTextField` swap between its field-editor
-and cell rendering, shifting the text / placeholder a point or two, so focus stays put. Input is
-frozen instead:
+**never resigns first responder**. Input is frozen instead:
 
 - `RootPaletteView` mirrors the open state into `PaletteState.menuOpen`, whose `didSet` fires
   `onMenuOpenChanged`.
 - `PalettePanel.sendEvent` then swallows text-editing keystrokes while `menuOpen` (letting ⌘/⌃ chords
-  and menu-nav keys through to SwiftUI `onKeyPress`), which is how ⌘. and ⌃X still reach their rows.
-- The caret is hidden by clearing SwiftUI's **own** live field editor's `insertionPointColor`. SwiftUI
-  force-casts its field editor to a private subclass, so vending a custom one crashes — only the
-  existing one can be tuned.
+  and menu-nav keys through to the search text view and `onKeyPress`), which is how ⌘. and ⌃X still
+  reach their rows.
+- The caret is hidden by clearing the focused text view's `insertionPointColor`.
+
+The original reason for never resigning is gone: it was the `NSTextField` cell/field-editor swap
+shifting the text a point or two, and the owned `NSTextView` has no swap. The freeze is kept as-is
+because it also preserves selection and typing state, but it is now a **candidate for simplification**
+rather than a constraint — resigning first responder here is no longer a visual regression.
 
 ## Chords `onKeyPress` never sees
 
 Most ⌘/⌃ chords reach SwiftUI's `onKeyPress` fine. Three kinds do not, and all of them are handled in
 `PalettePanel.sendEvent` before `super` hands the event to the responder chain:
 
-- **A bare backspace** — the field editor consumes it as an edit (`onBareBackspace`).
+- **A bare backspace** — the search text view consumes it as an edit (`onBareBackspace`).
 - **Chords with no main menu item** — ⌘, and ⌘w, which an app with a menu bar would never see here.
 - **Chords AppKit has already bound to a selector.** `⌘.` is the one that bites: AppKit binds it to
-  `cancelOperation:` alongside Escape, so `interpretKeyEvents` hands it to the field editor and
+  `cancelOperation:` alongside Escape, so `interpretKeyEvents` hands it to the search text view and
   `onKeyPress(keys: ["."])` never fires. Pin (⌘.) therefore arrives through `onCommandShortcut`,
   which bumps `PaletteState.pinChordToken`; `RootPaletteView` observes that and resolves the row
   through the current screen, so **which** row gets pinned still comes from `screen.rows` alone.
@@ -261,7 +289,7 @@ assuming the handler is wrong.
 and everywhere else the horizontal pair falls through to the caret, which is what a native search field
 does.
 
-None of them reach `onKeyPress` on their own: AppKit's key-binding table hands the field editor
+None of them navigate on their own: AppKit's key-binding table hands the search text view
 `moveDown:` / `moveUp:` / `moveForward:` / `moveBackward:` first, and in a one-line field the vertical
 pair walks the caret to the end or the start rather than moving anything.
 
@@ -269,8 +297,8 @@ pair walks the caret to the end or the start rather than moving anything.
 other rule it applies. Nothing else changes: the arrow handlers in `RootPaletteView` are the only
 navigation code, so the compact bar's expand-on-↓, the grid's row and column steps, menu highlight
 movement and the scroll-into-view intent all follow for free. The caret keeps ⌃F/⌃B off the grid
-because `moveHorizontally` leaves →/← `.ignored` there, and the field editor then moves by a character
-exactly as the chord natively would. A chord carrying any modifier beyond ⌃ — ⌃⇧Q, say — is left alone.
+because `moveHorizontally` declines →/← there, and the text view then moves by a character exactly as
+the chord natively would. A chord carrying any modifier beyond ⌃ — ⌃⇧Q, say — is left alone.
 
 ## Focus restoration (load-bearing)
 

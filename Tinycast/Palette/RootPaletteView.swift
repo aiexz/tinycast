@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct RootPaletteView: View {
@@ -18,7 +19,8 @@ struct RootPaletteView: View {
     @Environment(QuicklinkArgumentSession.self) private var quicklinkArguments
     @Environment(ExtensionManager.self) private var extensions
     @Environment(AppSettings.self) private var settings
-    @FocusState private var searchFocused: Bool
+    /// Intent, not SwiftUI focus: the search field is an `NSTextView` that takes and reports it.
+    @State private var searchFocused = false
     /// Kept apart from the search field's own focus. See docs/features/palette.md.
     @FocusState private var argumentFocused: String?
     /// Which in-window menu is open; at most one, so the state cannot disagree with itself.
@@ -283,65 +285,19 @@ struct RootPaletteView: View {
             }
             return .handled
         }
-        .onKeyPress(.downArrow) {
-            if isCollapsed {
-                // The compact bar shows no selection, so Down reveals the list's first row.
-                vm.selection = 0
-                core.paletteCoordinator.expandFromCompact()
-                return .handled
-            }
-            if menuOpen {
-                moveMenu(1)
-                return .handled
-            }
-            moveVertically(1)
-            return .handled
-        }
-        .onKeyPress(.upArrow) {
-            if isCollapsed { return .ignored }
-            if menuOpen {
-                moveMenu(-1)
-                return .handled
-            }
-            moveVertically(-1)
-            return .handled
-        }
+        // These reach `onKeyPress` only while an inline argument field holds focus; the search
+        // field consumes them first through `handleSearchKey`.
+        .onKeyPress(.downArrow) { moveDown() ? .handled : .ignored }
+        .onKeyPress(.upArrow) { moveUp() ? .handled : .ignored }
         // Horizontal arrows step the grid; elsewhere they stay with the caret.
-        .onKeyPress(.leftArrow) {
-            if menuOpen { return .handled }
-            return moveHorizontally(-1) ? .handled : .ignored
-        }
-        .onKeyPress(.rightArrow) {
-            if menuOpen { return .handled }
-            return moveHorizontally(1) ? .handled : .ignored
-        }
-        // Plain ↵ activates an open menu's row; a modified ↵ always runs the selection's.
+        .onKeyPress(.leftArrow) { menuOpen || moveHorizontally(-1) ? .handled : .ignored }
+        .onKeyPress(.rightArrow) { menuOpen || moveHorizontally(1) ? .handled : .ignored }
         .onKeyPress(keys: [.return], phases: .down) { press in
-            let command = press.modifiers.contains(.command)
-            let option = press.modifiers.contains(.option)
-            if menuOpen, !command, !option {
-                activateMenuItem(menuSelection)
-                return .handled
-            }
-            guard command || option else { return .ignored }
-            let screen = screen
-            let selection = selection(in: screen)
-            if command { return screen.secondary(at: selection) ? .handled : .ignored }
-            return screen.pasteKeepingWindowOpen(at: selection) ? .handled : .ignored
+            submit(
+                command: press.modifiers.contains(.command),
+                option: press.modifiers.contains(.option)) ? .handled : .ignored
         }
-        .onKeyPress(.escape) {
-            if menuOpen {
-                closeMenus()
-                return .handled
-            }
-            // An extension pops its own navigation stack before the command is left.
-            if vm.mode == .extensionCommand {
-                core.extensionCoordinator.exitExtensionScreen()
-                return .handled
-            }
-            core.paletteCoordinator.hidePalette()
-            return .handled
-        }
+        .onKeyPress(.escape) { cancel() ? .handled : .ignored }
         .onKeyPress(.tab) {
             if !menuOpen { advanceTabFocus() }
             return .handled
@@ -525,40 +481,52 @@ struct RootPaletteView: View {
     /// The one search field — past its text it's a drag handle, matching Spotlight.
     private var searchField: some View {
         @Bindable var vm = vm
-        return TextField("", text: $vm.query)
-            .textFieldStyle(.plain)
-            .font(Theme.Typography.searchField)
-            .tint(.white)
-            .focused($searchFocused)
-            .onSubmit(activateSelection)
-            // Fills the row's height, so there's no gap above it for topDragStrip to meet.
-            .frame(maxHeight: .infinity)
-            .background(alignment: .leading) {
-                if vm.query.isEmpty {
-                    Text(searchPrompt)
-                        .font(Theme.Typography.searchField)
-                        .foregroundStyle(Theme.Colors.textTertiary)
-                        .lineLimit(1)
-                        // Never a click target: tapping the placeholder must still land the caret.
-                        .allowsHitTesting(false)
-                }
+        return PaletteSearchField(
+            text: $vm.query, isFocused: $searchFocused, prompt: searchPrompt,
+            onKeyCommand: handleSearchKey
+        )
+        // Fills the row's height, so there's no gap above it for topDragStrip to meet.
+        .frame(maxHeight: .infinity)
+        // Never branches on query — that tore down the text view mid-keystroke once.
+        .overlay {
+            if settings.paletteDraggable {
+                TextTrailingDragHandle(
+                    text: vm.query, font: Theme.Typography.searchFieldNSFont,
+                    onBegan: beginDrag, onEnded: endDrag)
             }
-            // The prompt used to carry this; without it the field would be unlabelled.
-            .accessibilityLabel(Text(searchPrompt))
-            // Never branches on query — that tore down the field editor mid-keystroke once.
-            .overlay {
-                if settings.paletteDraggable {
-                    TextTrailingDragHandle(
-                        text: vm.query, font: Theme.Typography.searchFieldNSFont,
-                        onBegan: beginDrag, onEnded: endDrag)
-                }
-            }
-            // The panel resolves the pointer against this rather than hit-testing for the field.
-            .onGeometryChange(for: CGRect.self) {
-                $0.frame(in: .global)
-            } action: {
-                vm.searchFieldFrame = $0
-            }
+        }
+        // The panel resolves the pointer against this rather than hit-testing for the field.
+        .onGeometryChange(for: CGRect.self) {
+            $0.frame(in: .global)
+        } action: {
+            vm.searchFieldFrame = $0
+        }
+    }
+
+    /// The search field answers first and the caret keeps whatever the palette declines. Argument
+    /// fields are SwiftUI's, so the same handlers stay on `onKeyPress` for when one holds focus.
+    private func handleSearchKey(
+        _ key: PaletteSearchKey, _ modifiers: NSEvent.ModifierFlags
+    )
+        -> Bool
+    {
+        switch key {
+        case .up: return moveUp()
+        case .down: return moveDown()
+        case .left: return menuOpen || moveHorizontally(-1)
+        case .right: return menuOpen || moveHorizontally(1)
+        case .submit:
+            let command = modifiers.contains(.command)
+            let option = modifiers.contains(.option)
+            if submit(command: command, option: option) { return true }
+            // The field's own ↵: what the shared handler declines runs the selection's action.
+            if !command, !option { activateSelection() }
+            return true
+        case .tab:
+            if !menuOpen { advanceTabFocus() }
+            return true
+        case .cancel: return cancel()
+        }
     }
 
     /// The Uninstall screen's primary action is destructive, so its pill isn't white.
@@ -687,6 +655,61 @@ struct RootPaletteView: View {
         }
         vm.selection = next
         scroll = ScrollIntent(kind: .follow)
+        return true
+    }
+
+    /// ↓ reveals the list from the compact bar, else steps the open menu or the rows.
+    private func moveDown() -> Bool {
+        if isCollapsed {
+            // The compact bar shows no selection, so Down reveals the list's first row.
+            vm.selection = 0
+            core.paletteCoordinator.expandFromCompact()
+            return true
+        }
+        if menuOpen {
+            moveMenu(1)
+            return true
+        }
+        moveVertically(1)
+        return true
+    }
+
+    /// The compact bar has nothing above it, so ↑ stays with the caret there.
+    private func moveUp() -> Bool {
+        if isCollapsed { return false }
+        if menuOpen {
+            moveMenu(-1)
+            return true
+        }
+        moveVertically(-1)
+        return true
+    }
+
+    /// Plain ↵ activates an open menu's row; a modified ↵ always runs the selection's.
+    private func submit(command: Bool, option: Bool) -> Bool {
+        if menuOpen, !command, !option {
+            activateMenuItem(menuSelection)
+            return true
+        }
+        guard command || option else { return false }
+        let screen = screen
+        let selection = selection(in: screen)
+        if command { return screen.secondary(at: selection) }
+        return screen.pasteKeepingWindowOpen(at: selection)
+    }
+
+    /// Escape unwinds one layer per press: the open menu, then the extension screen, then the panel.
+    private func cancel() -> Bool {
+        if menuOpen {
+            closeMenus()
+            return true
+        }
+        // An extension pops its own navigation stack before the command is left.
+        if vm.mode == .extensionCommand {
+            core.extensionCoordinator.exitExtensionScreen()
+            return true
+        }
+        core.paletteCoordinator.hidePalette()
         return true
     }
 

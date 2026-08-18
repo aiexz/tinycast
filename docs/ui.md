@@ -94,9 +94,9 @@ Notes adds `noteWindow 520×420` (opening size on a first run only), `noteWindow
 
 ### Typography (`Theme.Typography`)
 
-System fonts only — **no fixed point sizes in views** (honors Dynamic Type). `searchField` is the one
-explicit size (20pt regular). Use `rowTitle` (`.body`), `sectionHeader` (`.subheadline.medium`),
-`rowTrailing`/`bar`/`menuRow`/`keyCap` etc. as named.
+System fonts only — **no fixed point sizes in views** (honors Dynamic Type). `searchFieldNSFont` is the
+one explicit size (20pt regular), because the palette's field is an `NSTextView`. Use `rowTitle`
+(`.body`), `sectionHeader` (`.subheadline.medium`), `rowTrailing`/`bar`/`menuRow`/`keyCap` etc. as named.
 
 ### Colors (`Theme.Colors`) — the white-alpha ramp
 
@@ -461,10 +461,12 @@ The calculator's inline `CalculatorCard` reuses this card language (`cardFill` +
 
 ## The palette search field
 
-Its placeholder is drawn by Tinycast, not by the field's `prompt` — an `NSTextField` renders a prompt
-through either its cell or its (one point taller) field editor, so a real prompt steps vertically when
-focus moves. Don't reintroduce `prompt:` on that field. See
-[features/palette.md](features/palette.md#the-placeholder-is-tinycasts-not-the-fields).
+It is an owned `NSTextView` (`PaletteSearchTextView`), not a SwiftUI `TextField`. An `NSTextField`
+draws its string through its cell when unfocused and through a field editor a point taller once
+focused, so both the text and any `prompt` stepped vertically as focus moved. A text view is its own
+editor, so nothing swaps and nothing steps. **Don't put a `TextField` back here**, and don't add a
+`prompt:` — the view draws the placeholder itself, through the same text container as the query. See
+[features/palette.md](features/palette.md#the-search-field-is-tinycasts).
 
 ## Rules for agents working on the UI
 

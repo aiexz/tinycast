@@ -18,6 +18,7 @@
 		07726F26DC68689F8984F467 /* Scrypt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D0784E49BC5899A585F285 /* Scrypt.swift */; };
 		0820C7539E3328338C3C8FBD /* BarButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4395BACF833C810961A248F0 /* BarButton.swift */; };
 		089C174783A60216FCC952B3 /* SpotlightNames.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0ABE4AF80DD5F5F8E91F63E /* SpotlightNames.swift */; };
+		0A3273195B033B62952A7220 /* PaletteSearchField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 227B7D0CBA27AAF08D53F21A /* PaletteSearchField.swift */; };
 		0B9C941402B85C69A33200C2 /* UninstallProtection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 37A48095F6487DEE76663F88 /* UninstallProtection.swift */; };
 		0C1CACEF014462D3F581CE54 /* EmojiSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B42664C60B760276FBAAD61 /* EmojiSettingsView.swift */; };
 		0DD808F80666846F4E74BAD8 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 23591B301A183579098AA019 /* OnboardingView.swift */; };
@@ -239,6 +240,7 @@
 		CC984C9647779469629461E7 /* LauncherItemsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 121A2ACAEC4D2D25D3112634 /* LauncherItemsSection.swift */; };
 		CC9A286B77E32C22B21A22BE /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0311153A4A3557C6FFEAAAB /* HotKeyManager.swift */; };
 		CCC775255627E23DC5B567AE /* CustomCommandEditorSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = B40049CE320BEE3A4388CDFF /* CustomCommandEditorSheet.swift */; };
+		CD04C9CA00C002C0EC82756A /* AccessibilityText.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABEA89E08994378FB044B4BB /* AccessibilityText.swift */; };
 		CE15888F3C15EE2706E108A0 /* AppDisplayName.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BBDB6A6CE9564ADA2D16F53 /* AppDisplayName.swift */; };
 		CEE0B612FFDB0AFFEF23A8A1 /* SearchScopesSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC45597561DCD90F51506F7 /* SearchScopesSection.swift */; };
 		CF1015EA1573EFBBA647B93B /* ExtensionRegistriesSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FA081CD5CEA054447D0691F /* ExtensionRegistriesSheet.swift */; };
@@ -327,6 +329,7 @@
 		201FCD08ACA933378876385B /* ClipboardStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardStore.swift; sourceTree = "<group>"; };
 		209D951FDD587A040F1F76F3 /* PaletteWindowController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaletteWindowController.swift; sourceTree = "<group>"; };
 		2258D4A6B6C22AB7C5D421BE /* DoubleTapMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DoubleTapMonitor.swift; sourceTree = "<group>"; };
+		227B7D0CBA27AAF08D53F21A /* PaletteSearchField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaletteSearchField.swift; sourceTree = "<group>"; };
 		23591B301A183579098AA019 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		23F7C8CBD0AA75D016DBFC06 /* SettingsPaneScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsPaneScanner.swift; sourceTree = "<group>"; };
 		2575583134BE03EA9FA719CD /* ActivationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivationPolicy.swift; sourceTree = "<group>"; };
@@ -495,6 +498,7 @@
 		AA99178E0DCF6CBB521FB098 /* WindowMover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowMover.swift; sourceTree = "<group>"; };
 		AAD838940E655559E32BE8EA /* UninstallPlan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UninstallPlan.swift; sourceTree = "<group>"; };
 		ABB9DB77DCE25C41D86BB955 /* SearchRelevance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchRelevance.swift; sourceTree = "<group>"; };
+		ABEA89E08994378FB044B4BB /* AccessibilityText.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityText.swift; sourceTree = "<group>"; };
 		ACC8371BCD366F2549E0B01B /* SectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SectionHeader.swift; sourceTree = "<group>"; };
 		ADC45597561DCD90F51506F7 /* SearchScopesSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchScopesSection.swift; sourceTree = "<group>"; };
 		ADD4CE330F75BC5FE5EAD99E /* Tooltip.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tooltip.swift; sourceTree = "<group>"; };
@@ -607,6 +611,7 @@
 			children = (
 				7073D3C441D37F94E780B1D7 /* Compression */,
 				DD0FEE8E2D95BD51907D383E /* Images */,
+				ABEA89E08994378FB044B4BB /* AccessibilityText.swift */,
 				2575583134BE03EA9FA719CD /* ActivationPolicy.swift */,
 				5BBDB6A6CE9564ADA2D16F53 /* AppDisplayName.swift */,
 				B6A96350EBE68EC79497FA2D /* AppPaths.swift */,
@@ -1331,6 +1336,7 @@
 				BA9F3FA9925873D25EAF7D03 /* PalettePanel.swift */,
 				802BD2F4CC057228F2528217 /* PalettePlacement.swift */,
 				445B0374FD5D74DBE23243CD /* PaletteScreen.swift */,
+				227B7D0CBA27AAF08D53F21A /* PaletteSearchField.swift */,
 				188A6D3C5B6BC67716F15F83 /* PaletteState.swift */,
 				209D951FDD587A040F1F76F3 /* PaletteWindowController.swift */,
 				D23A98172AA46F5C0C89C4AB /* RootPaletteView.swift */,
@@ -1636,6 +1642,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				540F1433DC46BC97C9F80E06 /* AboutView.swift in Sources */,
+				CD04C9CA00C002C0EC82756A /* AccessibilityText.swift in Sources */,
 				16F81066F7B59AD44CE09261 /* ActivationPolicy.swift in Sources */,
 				D68E7585496722BEC72E788C /* AliasStore.swift in Sources */,
 				EA89498DA03BDFA3858144BF /* AppActionsMenu.swift in Sources */,
@@ -1808,6 +1815,7 @@
 				1C81DCEBEFFC1191751135F4 /* PalettePlacement.swift in Sources */,
 				9F8806D46EBAF7058FC2EAEC /* PaletteRowIndex.swift in Sources */,
 				DB6B294B3D15B0AABCE5427E /* PaletteScreen.swift in Sources */,
+				0A3273195B033B62952A7220 /* PaletteSearchField.swift in Sources */,
 				1BC16048EE05A1FD25739CB4 /* PaletteState.swift in Sources */,
 				52C4F57BB26F420CCD22C1D7 /* PaletteWindowController.swift in Sources */,
 				E4B18EBFFD009B2CAFF4BA9B /* PanelTransition.swift in Sources */,

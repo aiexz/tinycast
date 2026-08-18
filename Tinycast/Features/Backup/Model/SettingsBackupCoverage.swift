@@ -50,6 +50,9 @@ enum SettingsBackupCoverage {
             "Names a tool on this Mac; the machine a backup lands on may not have it.",
         AppSettingsKey.extensionRegistries.rawValue:
             "A registry is a source of executable code; adding one has to be a deliberate act.",
+        AppSettingsKey.extensionCustomSearchPaths.rawValue:
+            "Machine-local toolchain paths; the Mac a backup lands on may not have them, or may have "
+            + "something else there.",
         AppSettingsKey.extensionsEnabled.rawValue:
             "Doubles as consent to run third-party JavaScript; an import must not switch it on.",
         AppSettingsKey.palettePosition.rawValue:

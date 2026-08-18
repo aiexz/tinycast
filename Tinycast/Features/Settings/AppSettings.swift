@@ -189,6 +189,15 @@ final class AppSettings {
         }
     }
 
+    /// Extra PATH folders searched before the built-in list, for a toolchain in a place Tinycast
+    /// doesn't already know — mise or Nix shims are the common case. Empty means nothing extra.
+    var extensionCustomSearchPaths: [String] {
+        didSet {
+            defaults.set(
+                extensionCustomSearchPaths, forKey: Key.extensionCustomSearchPaths.rawValue)
+        }
+    }
+
     /// Off means fully off: no launcher entries, and a still-registered shortcut moves nothing.
     var windowManagementEnabled: Bool {
         didSet {
@@ -322,6 +331,8 @@ final class AppSettings {
             defaults.data(forKey: Key.extensionRegistries.rawValue)
             .flatMap { try? JSONDecoder().decode([ExtensionRegistry].self, from: $0) }
             ?? ExtensionRegistry.defaults
+        extensionCustomSearchPaths =
+            defaults.stringArray(forKey: Key.extensionCustomSearchPaths.rawValue) ?? []
         windowManagementEnabled = defaults.bool(forKey: Key.windowManagementEnabled.rawValue)
         windowManagementShowInLauncher =
             defaults.object(forKey: Key.windowManagementShowInLauncher.rawValue) == nil

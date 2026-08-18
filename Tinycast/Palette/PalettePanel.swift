@@ -48,7 +48,7 @@ final class PalettePanel: NSPanel {
             keyCode: UInt16(arrow.code))
     }
 
-    /// Caret hiding on SwiftUI's own field editor. docs/features/palette.md#menu-open-input-freeze
+    /// Caret hiding on the focused text view. docs/features/palette.md#menu-open-input-freeze
     private func setSearchCaretHidden(_ hidden: Bool) {
         guard let editor = firstResponder as? NSTextView else { return }
         editor.insertionPointColor = hidden ? .clear : .white
@@ -63,20 +63,16 @@ final class PalettePanel: NSPanel {
     ]
 
     /// Two AppKit mechanisms disagree over the field — SwiftUI's clip view claims the arrow for
-    /// the whole window as a cursor rect, the field editor claims the I-beam from its tracking
+    /// the whole window as a cursor rect, the search text view claims the I-beam from its tracking
     /// area — so the panel settles it from the field's own frame, after `super` has had its say.
     private func applyCursorPolicy(for event: NSEvent) {
         guard Self.cursorEvents.contains(event.type) else { return }
-        // Outset: the field editor AppKit installs is a point taller than the field it serves.
-        let text = searchFieldRect.insetBy(dx: -Self.fieldEditorSlack, dy: -Self.fieldEditorSlack)
         let cursor: NSCursor =
-            text.contains(convertPoint(fromScreen: NSEvent.mouseLocation)) ? .iBeam : .arrow
+            searchFieldRect.contains(convertPoint(fromScreen: NSEvent.mouseLocation))
+            ? .iBeam : .arrow
         guard NSCursor.current !== cursor else { return }
         cursor.set()
     }
-
-    /// docs/features/palette.md: a 24pt editor in a 23pt field, so its I-beam overhangs.
-    private static let fieldEditorSlack: CGFloat = 2
 
     /// SwiftUI reports the field top-left down; AppKit reads the window bottom-left up.
     private var searchFieldRect: CGRect {

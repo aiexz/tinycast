@@ -23,10 +23,12 @@ earliest scope wins).
 Settings and persisted as `AppSettings.searchScopes`. A scope is either a directory or a single `.app`
 bundle, stored tilde-abbreviated so the UI reads cleanly and a settings backup stays portable.
 
-Enumeration is **flat** — one `contentsOfDirectory` per scope, no recursion. A nested folder such as
-`/Applications/Adobe` is indexed by adding it as its own scope, which keeps the list honest: what it
-shows is exactly what is scanned. (A one-level nested walk was measured against the flat list over the
-real default set: same 96 apps, same ~0.5 ms once `Bundle()` metadata reads are counted.)
+Enumeration descends **one subfolder deep** — a scope's own `.app` children, plus any inside an
+immediate subfolder, are indexed. That catches vendor-folder installs like
+`/Applications/Blackmagic Design/DaVinci Resolve.app` without the folder needing its own scope
+(#256). The walk stays bounded rather than fully recursive: it never opens an `.app` bundle's own
+`Contents/` tree, because `.app` is treated as a leaf, and a subfolder nested deeper than one level
+still needs its own scope.
 
 The defaults cover `/Applications` and `/System/Applications` plus their `Utilities` folders,
 `/System/Library/CoreServices/Applications`, the cryptex apps under
