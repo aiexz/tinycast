@@ -53,7 +53,9 @@ final class LauncherCoordinator {
     func launch(
         _ app: AppEntry, searchQuery: String? = nil, arguments: [String: String] = [:]
     ) {
-        if let searchQuery {
+        if app.kind == .application {
+            ranking.record(itemKey: app.preferenceKey, query: searchQuery ?? "")
+        } else if let searchQuery {
             ranking.record(itemKey: app.preferenceKey, query: searchQuery)
         }
         // Commands dispatch before the palette hides: mode-switching commands keep it open.

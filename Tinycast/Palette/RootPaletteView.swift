@@ -143,13 +143,14 @@ struct RootPaletteView: View {
             (count > 0 || vm.mode == .quicklinkArguments) && screen.hasPrimaryAction(at: sel)
 
         // One header position, so focus survives the swap. See docs/features/palette.md.
-        return Group {
+        let content = AnyView(Group {
             if isCollapsed {
                 Color.clear
             } else {
                 screen.body(selection: sel, scroll: scroll)
             }
-        }
+        })
+        let surface = AnyView(content
         .safeAreaInset(edge: .top, spacing: 0) { header }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !isCollapsed {
@@ -215,7 +216,8 @@ struct RootPaletteView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(Color.black.opacity(Theme.Colors.panelDimming))
         .background(VisualEffectView())
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.panel, style: .continuous)))
+        return surface
         // Every show bumps focusToken: refocus search and drop any menu left open.
         .onChange(of: vm.focusToken) {
             searchFocused = true

@@ -30,7 +30,7 @@ struct LauncherScreen: PaletteScreen {
         self.running = running
         self.openActions = openActions
 
-        let results = appIndex.orderedResults(
+        let results: [AppEntry] = appIndex.orderedResults(
             query: vm.query, visibility: visibility, favorites: favorites)
         let calc = CalcMemo.evaluate(vm.query, rates: currencyRates.rates)
         let entries = results.map(Row.entry)
@@ -167,7 +167,7 @@ struct LauncherScreen: PaletteScreen {
 
     /// The compact bar's favorite slots: 5 apps, or 4 plus an overflow that expands.
     var compactFavoriteSlots: [CompactFavoriteSlot] {
-        let ordered = appIndex.orderedResults(
+        let ordered: [AppEntry] = appIndex.orderedResults(
             query: "", visibility: visibility, favorites: favorites)
         let favs = ordered.prefix(while: favorites.isFavorite)
         if favs.count <= 5 { return favs.map(CompactFavoriteSlot.app) }
@@ -186,6 +186,7 @@ struct LauncherScreen: PaletteScreen {
             results: results,
             selectedID: entry(at: selection)?.id,
             favoriteCount: showSections ? results.prefix(while: favorites.isFavorite).count : 0,
+
             showSections: showSections,
             scroll: scroll,
             calc: calc,

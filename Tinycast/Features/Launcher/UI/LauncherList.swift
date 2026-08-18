@@ -48,13 +48,19 @@ struct LauncherList: View {
         }
         var rows: [Row] = calcRows
         let favorites = results.prefix(favoriteCount)
-        let rest = results.dropFirst(favoriteCount)
+        let recommended = results.dropFirst(favoriteCount).prefix(while: \.isRecommended)
+        let rest = results.dropFirst(favoriteCount + recommended.count)
         var grouped: [AppEntry.Kind: [AppEntry]] = [:]
         for app in rest { grouped[app.kind, default: []].append(app) }
         if !favorites.isEmpty {
             rows.append(.header("Favorites"))
             rows.append(contentsOf: favorites.map(Row.app))
         }
+        if !recommended.isEmpty {
+            rows.append(.header("Recommended"))
+            rows.append(contentsOf: recommended.map(Row.app))
+        }
+
         // Publication order, so rows match the flat index.
         let kinds: [AppEntry.Kind] = [
             .application, .systemSettings, .extensionCommand, .quicklink, .snippet,
