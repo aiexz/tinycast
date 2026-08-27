@@ -83,7 +83,7 @@ struct LauncherList: View {
         }
         if !recommended.isEmpty {
             rows.append(.header("Recommended"))
-            rows.append(contentsOf: recommended.map(Row.app))
+            rows.append(contentsOf: recommended.map { .app($0, slot: nil) })
         }
 
         // Publication order, so rows match the flat index.
