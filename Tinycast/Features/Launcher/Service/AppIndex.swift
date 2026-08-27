@@ -86,6 +86,8 @@ struct AppEntry: Identifiable, Hashable, Sendable {
     var iconOverride: EntryIcon?
     /// A per-entry label where the kind's own reads too flat — an extension's title, say.
     var labelOverride: String?
+    /// Empty-query display marker; never persisted or used for identity.
+    var isRecommended = false
 
     /// Stable identity for learned ranking, favorites, and other per-entry preferences.
     var preferenceKey: String { bundleID ?? id }
@@ -190,8 +192,8 @@ final class AppIndex {
         let aliasRevision: Int
         let visibilityRevision: Int
         let favoritesRevision: Int
+        let showRecommendedApps: Bool
     }
-
     /// Repeated renders for the same query reuse the ranking instead of re-matching every frame.
     @ObservationIgnored private var matchMemo = Memo<MatchKey, [AppEntry]>()
     @ObservationIgnored private var resultsMemo = Memo<ResultsKey, [AppEntry]>()
@@ -442,21 +444,33 @@ final class AppIndex {
         apps.filter { $0.kind == kind || $0.name.caseInsensitiveCompare(query) == .orderedSame }
     }
 
-    /// The launcher's ordered list: ranked matches minus hidden entries, favorites pinned first.
+    /// The launcher's ordered list: favorites, recommendations, then the remaining entries.
     func orderedResults(
         query: String, visibility: VisibilityStore, favorites: FavoritesStore
     ) -> [AppEntry] {
         let q = query.trimmingCharacters(in: .whitespaces)
+        let showRecommendedApps = settings?.showRecommendedApps ?? true
         let key = ResultsKey(
             query: q, entriesRevision: entriesRevision, rankingRevision: ranking.revision,
             aliasRevision: aliases.revision, visibilityRevision: visibility.revision,
-            favoritesRevision: favorites.revision)
+            favoritesRevision: favorites.revision, showRecommendedApps: showRecommendedApps)
         return resultsMemo.value(for: key) {
-            // Filtering stays downstream of `matches` so that memo is never keyed on hidden state.
             let base = matches(q).filter(visibility.isVisible)
-            guard q.isEmpty, !favorites.keys.isEmpty else { return base }
+            guard q.isEmpty else { return base }
             let split = favorites.ordered(base)
-            return split.favorites + split.rest
+            guard showRecommendedApps else { return split.favorites + split.rest }
+            let keys = ranking.recommendedKeys(from: split.rest.map(\.preferenceKey))
+            guard !keys.isEmpty else { return split.favorites + split.rest }
+            let entriesByKey = Dictionary(
+                split.rest.map { ($0.preferenceKey, $0) }, uniquingKeysWith: { first, _ in first })
+            let recommended = keys.compactMap { key -> AppEntry? in
+                guard var entry = entriesByKey[key] else { return nil }
+                entry.isRecommended = true
+                return entry
+            }
+            let recommendedKeys = Set(keys)
+            let rest = split.rest.filter { !recommendedKeys.contains($0.preferenceKey) }
+            return split.favorites + recommended + rest
         }
     }
 

@@ -13,6 +13,7 @@ enum AppSettingsKey: String, CaseIterable {
     case appearance = "appearance"
     case compactMode = "compactMode"
     case showFavoritesInCompactMode = "showFavoritesInCompactMode"
+    case showRecommendedApps = "showRecommendedApps"
     case searchScopes = "launcherSearchScopes"
     case openOnCursorScreen = "openOnCursorScreen"
     case autoSwitchInputSource = "autoSwitchInputSource"

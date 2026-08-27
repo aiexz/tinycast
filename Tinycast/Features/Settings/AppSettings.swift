@@ -138,6 +138,13 @@ final class AppSettings {
         }
     }
 
+    /// Shows up to five recommended applications on the empty launcher.
+    var showRecommendedApps: Bool {
+        didSet {
+            defaults.set(showRecommendedApps, forKey: Key.showRecommendedApps.rawValue)
+        }
+    }
+
     /// Summon the palette on the display under the pointer instead of the one holding the menu bar.
     var openOnCursorScreen: Bool {
         didSet { defaults.set(openOnCursorScreen, forKey: Key.openOnCursorScreen.rawValue) }
@@ -395,6 +402,10 @@ final class AppSettings {
         showFavoritesInCompactMode =
             defaults.object(forKey: Key.showFavoritesInCompactMode.rawValue) == nil
             || defaults.bool(forKey: Key.showFavoritesInCompactMode.rawValue)
+        // Defaults to true, so absence must be distinguished from a stored `false`.
+        showRecommendedApps =
+            defaults.object(forKey: Key.showRecommendedApps.rawValue) == nil
+            || defaults.bool(forKey: Key.showRecommendedApps.rawValue)
         // Unset seeds the defaults; a stored empty array is a deliberately cleared list.
         searchScopes =
             defaults.stringArray(forKey: Key.searchScopes.rawValue) ?? SearchScopes.defaults

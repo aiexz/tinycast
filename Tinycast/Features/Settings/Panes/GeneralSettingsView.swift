@@ -40,6 +40,12 @@ struct GeneralSettingsView: View {
             }
 
             Section {
+                Toggle(isOn: $settings.showRecommendedApps) {
+                    Text("Show recommended items")
+                    Text(
+                        "Show up to five frequently opened items when the search field is empty."
+                    )
+                }
                 LabeledContent("Learned ranking") {
                     Button("Reset…", role: .destructive) {
                         confirmingRankingReset = true
@@ -50,7 +56,8 @@ struct GeneralSettingsView: View {
                 Text("Search")
             } footer: {
                 Text(
-                    "Tinycast privately learns which results you choose for each query. Reset all learned choices to restore the default order."
+                    "Tinycast privately learns which results you choose for each query. "
+                        + "Reset all learned choices to restore the default order."
                 )
                 .font(.caption)
                 .foregroundStyle(.secondary)

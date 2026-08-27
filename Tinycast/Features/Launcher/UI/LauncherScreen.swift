@@ -44,7 +44,7 @@ struct LauncherScreen: PaletteScreen {
         self.openActions = openActions
         self.scrollToFollow = scrollToFollow
 
-        let results = appIndex.orderedResults(
+        let results: [AppEntry] = appIndex.orderedResults(
             query: vm.query, visibility: visibility, favorites: favorites)
         let calc = CalcMemo.evaluate(vm.query, rates: currencyRates.rates)
         let entries = results.map(Row.entry)

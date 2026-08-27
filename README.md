@@ -2,6 +2,9 @@
 
 A tiny, fully native macOS launcher — the essentials, without the bloat.
 
+> This fork matches the original Tinycast except for one addition: up to five recommended items appear
+> at the top of the empty launcher, based on launch history. The section can be disabled in Settings.
+
 <p align="center">
   <a href="https://discord.gg/v2Eeb4QQy3">
     <img alt="Join the Tinycast Discord"

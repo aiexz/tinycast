@@ -137,6 +137,80 @@ struct RankingTest {
             "the observed boost cap stays under a band stride",
             maxBoost < SearchRelevance.bandStride - FuzzyMatch.maximumScore)
 
+        // Recommendation & overall launch frecency checks
+        store.resetAll()
+        let recA = "com.example.appA"
+        let recB = "com.example.appB"
+        let recC = "com.example.appC"
+        let recD = "com.example.appD"
+        let recE = "com.example.appE"
+        let recF = "com.example.appF"
+        let recG = "com.example.appG"
+
+        store.record(itemKey: recA, query: "")
+        let overallRecordA = store.records.first { $0.itemKey == recA && $0.query == "" }
+        check("empty query records exactly one overall launch entry", overallRecordA?.count == 1)
+        check("empty query yields empty query boosts table", store.boosts(query: "").isEmpty)
+
+        store.record(itemKey: recA, query: "App")
+        let overallRecordAAfterTyped = store.records.first { $0.itemKey == recA && $0.query == "" }
+        check(
+            "typed launch increments overall count by exactly one independent of query length",
+            overallRecordAAfterTyped?.count == 2)
+        check("typed launch preserves learned query prefix", boost(store, recA, "a") > 0)
+        check("typed launch preserves full learned query", boost(store, recA, "app") > 0)
+
+        store.record(itemKey: recB, query: "")
+        check(
+            "recommendations order by frecency boost",
+            store.recommendedKeys(from: [recB, recA]) == [recA, recB])
+
+        check(
+            "recommendations exclude specified keys such as favorites",
+            store.recommendedKeys(from: [recA, recB], excluding: [recA]) == [recB])
+
+        check(
+            "unlaunched candidates are not recommended",
+            store.recommendedKeys(from: [recA, recB, recC]) == [recA, recB])
+
+        // Limit five
+        for key in [recC, recD, recE, recF, recG] {
+            store.record(itemKey: key, query: "")
+        }
+        let topFive = store.recommendedKeys(from: [recA, recB, recC, recD, recE, recF, recG])
+        check("recommendations default to at most five items", topFive.count == 5)
+        check("recommendations respect custom limit", store.recommendedKeys(from: [recA, recB, recC], limit: 2).count == 2)
+
+        // Deterministic tie-breaking and persistence use their own file, avoiding pending writes above.
+        let tieFileURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tinycast-ranking-tie-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: tieFileURL) }
+        let tieStore = LauncherRankingStore(fileURL: tieFileURL) { clock }
+        tieStore.record(itemKey: recA, query: "")
+        tieStore.record(itemKey: recB, query: "")
+        check(
+            "tied frecency scores break ties deterministically by candidate order (A then B)",
+            tieStore.recommendedKeys(from: [recA, recB]) == [recA, recB])
+        check(
+            "tied frecency scores break ties deterministically by candidate order (B then A)",
+            tieStore.recommendedKeys(from: [recB, recA]) == [recB, recA])
+
+        await tieStore.flush()
+        let reloadedTieStore = LauncherRankingStore(fileURL: tieFileURL) { clock }
+        check(
+            "overall launch records persist across store reloads",
+            reloadedTieStore.recommendedKeys(from: [recA, recB]) == [recA, recB])
+
+        // Reset behavior
+        reloadedTieStore.reset(itemKey: recA)
+        check(
+            "per-item reset removes item from recommendations",
+            reloadedTieStore.recommendedKeys(from: [recA, recB]) == [recB])
+        reloadedTieStore.resetAll()
+        check(
+            "global reset clears all recommendations",
+            reloadedTieStore.recommendedKeys(from: [recA, recB]).isEmpty)
+
         try? FileManager.default.removeItem(at: fileURL)
         print(failures == 0 ? "\nALL PASSED" : "\n\(failures) FAILED")
         exit(failures == 0 ? 0 : 1)

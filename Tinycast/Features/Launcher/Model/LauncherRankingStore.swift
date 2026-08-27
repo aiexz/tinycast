@@ -36,7 +36,7 @@ final class LauncherRankingStore {
             let decoded = try? JSONDecoder().decode([LauncherRankingRecord].self, from: data)
         {
             records = decoded.filter {
-                !$0.itemKey.isEmpty && !$0.query.isEmpty && $0.count > 0
+                !$0.itemKey.isEmpty && $0.count > 0
             }
         } else {
             records = []
@@ -50,22 +50,27 @@ final class LauncherRankingStore {
         await writeTask?.value
     }
 
-    /// Records every prefix, so the preferred result surfaces for shorter input too.
-    func record(itemKey: String, query: String) {
-        let query = Self.normalize(query)
-        guard !itemKey.isEmpty, !query.isEmpty else { return }
+    /// Records an overall launch and, when non-empty, every prefix so the preferred result surfaces for shorter input too.
+    func record(itemKey: String, query: String = "") {
+        guard !itemKey.isEmpty else { return }
+        let normalized = Self.normalize(query)
 
         let timestamp = now()
-        for prefix in Self.prefixes(of: query) {
+        var targets = [""]
+        if !normalized.isEmpty {
+            targets.append(contentsOf: Self.prefixes(of: normalized))
+        }
+
+        for target in targets {
             if let index = records.firstIndex(where: {
-                $0.itemKey == itemKey && $0.query == prefix
+                $0.itemKey == itemKey && $0.query == target
             }) {
                 records[index].count += 1
                 records[index].lastUsed = timestamp
             } else {
                 records.append(
                     LauncherRankingRecord(
-                        itemKey: itemKey, query: prefix, count: 1, lastUsed: timestamp))
+                        itemKey: itemKey, query: target, count: 1, lastUsed: timestamp))
             }
         }
 
@@ -76,6 +81,44 @@ final class LauncherRankingStore {
             records.removeLast(records.count - Self.cap)
         }
         didMutate()
+    }
+
+    /// Returns at most `limit` recommended keys ordered by overall launch frecency with deterministic source-order tie-breaking.
+    func recommendedKeys(
+        from candidateKeys: [String],
+        excluding excludedKeys: Set<String> = [],
+        limit: Int = 5
+    ) -> [String] {
+        guard limit > 0, !candidateKeys.isEmpty else { return [] }
+        let learned = rankingLookup()[""] ?? [:]
+        guard !learned.isEmpty else { return [] }
+        let timestamp = now()
+
+        var seen = Set<String>()
+        var scored: [(key: String, boost: Int, index: Int)] = []
+        scored.reserveCapacity(min(candidateKeys.count, limit))
+
+        for (index, key) in candidateKeys.enumerated() {
+            guard !excludedKeys.contains(key),
+                seen.insert(key).inserted,
+                let record = learned[key]
+            else { continue }
+            let score = boost(record, at: timestamp)
+            if score > 0 {
+                scored.append((key: key, boost: score, index: index))
+            }
+        }
+
+        guard !scored.isEmpty else { return [] }
+
+        scored.sort { a, b in
+            if a.boost != b.boost {
+                return a.boost > b.boost
+            }
+            return a.index < b.index
+        }
+
+        return Array(scored.prefix(limit).map(\.key))
     }
 
     /// Boosts for one query; the fold and the clock read happen once, not per candidate.
