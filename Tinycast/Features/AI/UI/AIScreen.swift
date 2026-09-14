@@ -3,6 +3,7 @@ import SwiftUI
 /// AI chat as one native palette screen: the search field is its composer.
 struct AIScreen: PaletteScreen {
     let vm: PaletteState
+    let metrics: InterfaceMetrics
     let chat: AIChatState
     let settings: AISettingsStore
     let coordinator: AIChatCoordinator
@@ -30,19 +31,22 @@ struct AIScreen: PaletteScreen {
             })
         if chat.lastAssistantText != nil {
             items.append(
-                PopoverMenuItem(title: "Copy Last Response", systemImage: "doc.on.doc") {
+                PopoverMenuItem(title: "Copy Last Response", systemImage: "doc.on.doc", startsSection: true) {
                     coordinator.copyLastResponse()
                 })
         }
-        if !chat.pendingImages.isEmpty {
+        if !chat.pendingAttachments.isEmpty {
             items.append(
-                PopoverMenuItem(title: "Remove Attachments", systemImage: "photo.badge.minus") {
+                PopoverMenuItem(
+                    title: "Remove Attachments", systemImage: "paperclip",
+                    startsSection: chat.lastAssistantText == nil
+                ) {
                     coordinator.clearAttachments()
                 })
         }
         items.append(
             PopoverMenuItem(
-                title: "Chat History", systemImage: "clock.arrow.circlepath"
+                title: "Chat History", systemImage: "clock.arrow.circlepath", startsSection: true
             ) {
                 coordinator.showHistory()
             })
@@ -67,19 +71,31 @@ struct AIScreen: PaletteScreen {
     func headerAccessory(
         at selection: Int, focus: FocusState<String?>.Binding
     ) -> PaletteHeaderAccessory? {
-        let attachments = chat.pendingImages
-        guard !attachments.isEmpty else { return nil }
+        let attachments = chat.pendingAttachments
+        let addressed = coordinator.addressedServer(in: vm.query)
+        guard !attachments.isEmpty || addressed != nil else { return nil }
+        let width =
+            PendingAttachmentsChips.width(for: attachments, metrics)
+            + (addressed.map { ComposerChip.width(of: "@\($0.slug)", metrics) } ?? 0)
         return PaletteHeaderAccessory(
-            width: PendingAttachmentsChips.width(for: attachments) + Theme.Size.menuWidth,
+            width: width + metrics.size.menuWidth,
             fieldNames: [], firstIncompleteField: nil,
-            view: AnyView(PendingAttachmentsChips(attachments: attachments)))
+            view: AnyView(
+                HStack(spacing: metrics.spacing.sm) {
+                    if let addressed {
+                        ComposerChip(symbol: "wrench.and.screwdriver", label: "@\(addressed.slug)")
+                    }
+                    PendingAttachmentsChips(
+                        attachments: attachments,
+                        onRemove: coordinator.removeAttachment)
+                }))
     }
 
     func body(selection: Int, scroll: ScrollIntent) -> AnyView {
         AnyView(
             AIChatView(
                 chat: chat, settings: settings, availability: coordinator.availability,
-                onConfigure: coordinator.showSettings, onAppear: coordinator.warmUpModelList))
+                onConfigure: coordinator.showSettings, onAppear: coordinator.prepareForChat))
     }
 }
 
@@ -114,12 +130,14 @@ private struct AIChatView: View {
 }
 
 private struct AIEmptyState: View {
+
+    @Environment(\.metrics) private var metrics
     let message: String?
     let canConfigure: Bool
     let onConfigure: () -> Void
 
     var body: some View {
-        VStack(spacing: Theme.Spacing.md) {
+        VStack(spacing: metrics.spacing.md) {
             Image(systemName: "sparkles")
                 .font(.largeTitle)
                 .symbolRenderingMode(.hierarchical)
@@ -128,53 +146,201 @@ private struct AIEmptyState: View {
                 .foregroundStyle(.secondary)
             if let message {
                 Text(message)
-                    .font(Theme.Typography.rowTrailing)
+                    .font(metrics.typography.rowTrailing)
                     .foregroundStyle(Theme.Colors.textTertiary)
                     .multilineTextAlignment(.center)
                 if canConfigure { Button("Configure AI", action: onConfigure) }
             } else {
-                HStack(spacing: Theme.Spacing.sm) {
+                HStack(spacing: metrics.spacing.sm) {
                     Text("Send a message")
                     KeyCapChip(text: "↵")
                 }
-                .font(Theme.Typography.rowTrailing)
+                .font(metrics.typography.rowTrailing)
                 .foregroundStyle(Theme.Colors.textTertiary)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.horizontal, Theme.Spacing.xxl)
+        .padding(.horizontal, metrics.spacing.xxl)
     }
 }
 
-/// Staged images sit after the typed text as named pills — the row is too thin for a thumbnail
-/// to read, so a photo glyph marks the kind instead.
-private struct PendingAttachmentsChips: View {
-    let attachments: [ChatAttachment]
+/// The MCP `@server` pill: a glyph and a word, unchanged by what attachments do.
+private struct ComposerChip: View {
+    @Environment(\.metrics) private var metrics
+    let symbol: String
+    let label: String
 
-    static func width(for attachments: [ChatAttachment]) -> CGFloat {
-        let font = Theme.Typography.chipNSFont
-        return attachments.reduce(0) { total, attachment in
-            let label = (attachment.name as NSString).size(withAttributes: [.font: font]).width
-            return total + Theme.Size.chatAttachmentGlyph + label + Theme.Spacing.md * 3
-        }
+    /// Load-bearing: `RootPaletteView.searchFieldWidth(for:)` shrinks the field by exactly this.
+    static func width(of label: String, _ metrics: InterfaceMetrics) -> CGFloat {
+        let font = metrics.typography.chipNSFont
+        let text = (label as NSString).size(withAttributes: [.font: font]).width
+        return metrics.size.chatAttachmentGlyph + text + metrics.spacing.md * 3
     }
 
     var body: some View {
-        HStack(spacing: Theme.Spacing.sm) {
-            ForEach(attachments) { attachment in
-                HStack(spacing: Theme.Spacing.xs) {
-                    Image(systemName: "photo")
-                        .font(Theme.Typography.chip)
-                        .symbolRenderingMode(.hierarchical)
-                        .frame(width: Theme.Size.chatAttachmentGlyph)
-                    Text(attachment.name)
-                        .font(Theme.Typography.chip)
-                        .lineLimit(1)
-                }
+        HStack(spacing: metrics.spacing.xs) {
+            Image(systemName: symbol)
+                .font(metrics.typography.chip)
+                .symbolRenderingMode(.hierarchical)
+                .frame(width: metrics.size.chatAttachmentGlyph)
+            Text(label)
+                .font(metrics.typography.chip)
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.Colors.textSecondary)
+        .padding(.horizontal, metrics.spacing.sm)
+        .padding(.vertical, metrics.spacing.xxs)
+        .background(Capsule().fill(Theme.Colors.controlSurface))
+    }
+}
+
+/// A staged file: an image states itself, a document names itself, and either can be taken back.
+private struct AttachmentChip: View {
+    @Environment(\.metrics) private var metrics
+    let attachment: ChatAttachment
+    let onRemove: () -> Void
+
+    @State private var hovered = false
+
+    /// A long file name is middle-truncated here rather than by layout, so the width is knowable.
+    private static let nameLimit = 16
+
+    /// Every kind is labelled: a bare thumbnail beside an ✕ reads as two stray marks, not a pill.
+    private static func shortened(_ name: String) -> String {
+        guard name.count > nameLimit else { return name }
+        let head = name.prefix(nameLimit - 7)
+        let tail = name.suffix(6)
+        return "\(head)…\(tail)"
+    }
+
+    static func width(for attachment: ChatAttachment, _ metrics: InterfaceMetrics) -> CGFloat {
+        let text = (Self.shortened(attachment.name) as NSString).size(
+            withAttributes: [.font: metrics.typography.chipNSFont]
+        ).width
+        return metrics.size.chatAttachmentInset * 2 + metrics.size.chatAttachmentThumb
+            + metrics.spacing.sm + text + metrics.spacing.sm + metrics.size.chatAttachmentRemove
+    }
+
+    var body: some View {
+        HStack(spacing: metrics.spacing.sm) {
+            leading
+            Text(Self.shortened(attachment.name))
+                .font(metrics.typography.chip)
+                .lineLimit(1)
                 .foregroundStyle(Theme.Colors.textSecondary)
-                .padding(.horizontal, Theme.Spacing.sm)
-                .padding(.vertical, Theme.Spacing.xxs)
-                .background(Capsule().fill(Theme.Colors.controlSurface))
+            Button(action: onRemove) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .frame(
+                        width: metrics.size.chatAttachmentRemove,
+                        height: metrics.size.chatAttachmentRemove
+                    )
+                    .foregroundStyle(hovered ? Theme.Colors.textPrimary : Theme.Colors.textTertiary)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Remove \(attachment.name)")
+        }
+        // Inset under the inner gap, so the thumbnail reads as filling the pill.
+        .padding(.horizontal, metrics.size.chatAttachmentInset)
+        .padding(.vertical, metrics.size.chatAttachmentInset)
+        .background(
+            RoundedRectangle(cornerRadius: metrics.radius.attachmentChip, style: .continuous)
+                .fill(Theme.Colors.controlSurface)
+        )
+        .onHover { hovered = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Attached \(attachment.name)")
+    }
+
+    @ViewBuilder private var leading: some View {
+        switch attachment.kind {
+        case .image:
+            ComposerThumbnail(data: attachment.preview, id: attachment.id)
+        case .pdf, .text:
+            Image(systemName: attachment.kind == .pdf ? "doc.richtext" : "doc.plaintext")
+                .font(metrics.typography.chip)
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Theme.Colors.textSecondary)
+                .frame(
+                    width: metrics.size.chatAttachmentThumb,
+                    height: metrics.size.chatAttachmentThumb)
+        }
+    }
+}
+
+/// Decoded once per attachment: `ForEach` keys on its id, so a per-keystroke re-render reuses it.
+private struct ComposerThumbnail: View {
+    @Environment(\.metrics) private var metrics
+    let data: Data?
+    let id: UUID
+
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: "photo")
+                    .font(metrics.typography.chip)
+                    .symbolRenderingMode(.hierarchical)
+            }
+        }
+        .frame(width: metrics.size.chatAttachmentThumb, height: metrics.size.chatAttachmentThumb)
+        .clipShape(RoundedRectangle(cornerRadius: metrics.radius.thumbnail, style: .continuous))
+        .task(id: id) { image = data.flatMap(NSImage.init(data:)) }
+    }
+}
+
+/// Staged files follow the typed text; past two they become a count, the width being the field's.
+private struct PendingAttachmentsChips: View {
+    @Environment(\.metrics) private var metrics
+    let attachments: [ChatAttachment]
+    let onRemove: (UUID) -> Void
+
+    /// Two, because a third chip plus its name leaves the field too narrow to read what you type.
+    private static let visibleLimit = 2
+
+    private static func visible(_ attachments: [ChatAttachment]) -> [ChatAttachment] {
+        Array(attachments.prefix(visibleLimit))
+    }
+
+    private static func overflowLabel(_ attachments: [ChatAttachment]) -> String? {
+        let hidden = attachments.count - visibleLimit
+        return hidden > 0 ? "+\(hidden)" : nil
+    }
+
+    static func width(for attachments: [ChatAttachment], _ metrics: InterfaceMetrics) -> CGFloat {
+        var total = visible(attachments).reduce(0) { $0 + AttachmentChip.width(for: $1, metrics) }
+        total += CGFloat(max(0, visible(attachments).count - 1)) * metrics.spacing.xs
+        if let label = overflowLabel(attachments) {
+            let text = (label as NSString).size(
+                withAttributes: [.font: metrics.typography.chipNSFont]
+            ).width
+            total += metrics.spacing.xs + text + metrics.spacing.sm * 2
+        }
+        return total
+    }
+
+    var body: some View {
+        HStack(spacing: metrics.spacing.xs) {
+            ForEach(Self.visible(attachments)) { attachment in
+                AttachmentChip(attachment: attachment) { onRemove(attachment.id) }
+            }
+            if let label = Self.overflowLabel(attachments) {
+                Text(label)
+                    .font(metrics.typography.chip)
+                    .foregroundStyle(Theme.Colors.textTertiary)
+                    .padding(.horizontal, metrics.spacing.sm)
+                    .padding(.vertical, metrics.spacing.xs)
+                    .background(
+                        RoundedRectangle(
+                            cornerRadius: metrics.radius.attachmentChip, style: .continuous
+                        ).fill(Theme.Colors.controlSurface)
+                    )
+                    .help("\(attachments.count) files attached")
+                    .accessibilityLabel("\(attachments.count) files attached")
             }
         }
     }
@@ -193,6 +359,23 @@ struct AIModelButton: View {
             icon: icon,
             isOpen: isOpen,
             help: "Switch AI model",
+            action: action
+        )
+        .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+struct AIReasoningButton: View {
+    let title: String
+    let isOpen: Bool
+    let action: () -> Void
+
+    var body: some View {
+        HeaderMenuButton(
+            title: title,
+            systemImage: "brain",
+            isOpen: isOpen,
+            help: "Change reasoning effort",
             action: action
         )
         .fixedSize(horizontal: true, vertical: false)

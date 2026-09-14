@@ -16,8 +16,7 @@ struct ExtensionCleanupTests {
 
     // MARK: - Fixtures
 
-    /// Roots under one throwaway directory. Nothing here can reach the real install: `Roots` is
-    /// injected, so `Bundle.main` is never consulted.
+    /// `Roots` is injected, so `Bundle.main` — the real install — is never consulted.
     static func makeRoots() -> (ExtensionCleanup.Roots, URL) {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("ext-cleanup-test-\(UUID().uuidString)", isDirectory: true)
@@ -146,8 +145,32 @@ struct ExtensionCleanupTests {
             "a workspace the installer would make is one the sweep finds")
     }
 
-    /// Raycast Beta v2 keeps its extensions under `raycast-x`. Checking only `raycast` is why an
-    /// install of the Beta reported that no Raycast was present at all.
+    static func executableAssetsAreRestored() {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ext-mode-test-\(UUID().uuidString)", isDirectory: true)
+        let assets = base.appendingPathComponent("assets", isDirectory: true)
+        try? FileManager.default.createDirectory(at: assets, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let binary = assets.appendingPathComponent("helper")
+        let script = assets.appendingPathComponent("script")
+        let text = assets.appendingPathComponent("readme")
+        try? Data([0xCF, 0xFA, 0xED, 0xFE]).write(to: binary)
+        try? Data("#!/bin/sh\nexit 0\n".utf8).write(to: script)
+        try? Data("ordinary asset".utf8).write(to: text)
+        for file in [binary, script, text] {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o644], ofItemAtPath: file.path)
+        }
+
+        try? ExtensionCatalog.restoreExecutablePermissions(in: base)
+
+        expect(FileManager.default.isExecutableFile(atPath: binary.path), "a Mach-O helper is repaired")
+        expect(FileManager.default.isExecutableFile(atPath: script.path), "a script helper is repaired")
+        expect(!FileManager.default.isExecutableFile(atPath: text.path), "an ordinary asset stays data")
+    }
+
+    /// Raycast Beta keeps extensions under `raycast-x`; checking only `raycast` missed it.
     static func bothRaycastChannelsAreSearched() {
         let roots = ExtensionCatalog.raycastExtensionRoots().map(\.path)
         expect(roots.count == 2, "both channels are searched: \(roots.count)")
@@ -167,6 +190,7 @@ struct ExtensionCleanupTests {
         reclaimableMatchesClean()
         emptyAndMissingRootsAreSafe()
         workspaceIsSweptByItsOwnPrefix()
+        executableAssetsAreRestored()
 
         print(failures == 0 ? "Extension cleanup tests passed" : "\(failures) tests failed")
         exit(failures == 0 ? 0 : 1)

@@ -1,5 +1,4 @@
-// Standalone test for meeting-link detection, the join and menu-bar windows, auto-join,
-// the event draft and the day buckets.
+// Meeting links, the join and menu-bar windows, auto-join, drafts, buckets and span.
 import Foundation
 
 @main
@@ -21,13 +20,16 @@ struct CalendarTests {
         fieldPrecedence()
         linkScanning()
         appURLRewrites()
+        accountPrefill()
         agendaFiltering()
         cardWindow()
         chordFallsBackWiderThanTheCard()
         countdownStrings()
         dayBuckets()
+        readSpan()
         menuBarWindow()
         menuBarFiltering()
+        menuBarToday()
         menuBarTitles()
         autoJoinFiresOnce()
         autoJoinRespectsArming()
@@ -137,6 +139,37 @@ struct CalendarTests {
         expect(link("https://example.com/room")?.appURL == nil, "a bare link opens the web")
     }
 
+    static func accountPrefill() {
+        expect(
+            hosted("https://meet.google.com/abc-defg-hij", "user@domain.com")?.webURL.absoluteString
+                == "https://meet.google.com/abc-defg-hij?authuser=user@domain.com",
+            "a Meet link opens as the account whose calendar carried it")
+        expect(
+            hosted("https://meet.google.com/abc?hs=1", "user@domain.com")?.webURL.absoluteString
+                == "https://meet.google.com/abc?hs=1&authuser=user@domain.com",
+            "the account joins a query the invite already had")
+        expect(
+            hosted("https://meet.google.com/abc?authuser=1", "user@domain.com")?.webURL
+                .absoluteString == "https://meet.google.com/abc?authuser=1",
+            "a link naming its own account is left alone")
+        expect(
+            hosted("https://meet.google.com/abc", "a+b@domain.com")?.webURL.absoluteString
+                == "https://meet.google.com/abc?authuser=a%2Bb@domain.com",
+            "a plus in the address is encoded, so it cannot be read as a space")
+        expect(
+            hosted("https://us02web.zoom.us/j/89", "user@domain.com")?.webURL.absoluteString
+                == "https://us02web.zoom.us/j/89",
+            "no other provider takes an account in the URL")
+        expect(
+            hosted("https://meet.google.com/abc-defg-hij", nil)?.webURL.absoluteString
+                == "https://meet.google.com/abc-defg-hij",
+            "a calendar with no address of its own leaves the link as written")
+        expect(
+            hosted("https://meet.google.com/abc-defg-hij", "user@domain.com")?.url.absoluteString
+                == "https://meet.google.com/abc-defg-hij",
+            "the link as written is what Copy Meeting Link keeps")
+    }
+
     // MARK: - The join window
 
     static func agendaFiltering() {
@@ -226,18 +259,31 @@ struct CalendarTests {
         expect(
             UpcomingWindow.countdown(to: start, now: start.addingTimeInterval(-1)) == "in 1 min",
             "a partial minute rounds up rather than reading as now")
-        expect(UpcomingWindow.countdown(to: start, now: start) == "now", "the start reads as now")
+        expect(UpcomingWindow.countdown(to: start, now: start) == "Now", "the start reads as Now")
         expect(
-            UpcomingWindow.countdown(to: start, now: start.addingTimeInterval(59)) == "now",
-            "the first minute after the start still reads as now")
+            UpcomingWindow.countdown(to: start, now: start.addingTimeInterval(299)) == "Now",
+            "the first five minutes after the start still read as Now")
         expect(
-            UpcomingWindow.countdown(to: start, now: start.addingTimeInterval(120)) == "2 min ago",
-            "past the start it counts up")
+            UpcomingWindow.countdown(to: start, now: start.addingTimeInterval(301)) == "Now",
+            "a started event stays Now outside the menu-bar-specific timer")
+        expect(
+            UpcomingWindow.countdown(to: start, now: start.addingTimeInterval(-619 * 60)) == "in 10 hr",
+            "a long wait rounds to hours")
+
+        let meeting = event(id: "standup", start: 60, minutes: 30)
+        expect(
+            UpcomingWindow.menuBarCountdown(for: meeting, now: start.addingTimeInterval(299)) == "Now",
+            "the menu bar says Now during the first five minutes")
+        expect(
+            UpcomingWindow.menuBarCountdown(for: meeting, now: start.addingTimeInterval(301))
+                == "24 min left",
+            "the menu bar switches to time left after five minutes")
     }
 
     // MARK: - The menu bar
 
-    static let automatic = MenuBarSummary(leadMinutes: 5, hideAfterMinutes: nil, linkedOnly: false)
+    static let automatic = MenuBarSummary(
+        leadMinutes: 5, hideAfterMinutes: nil, linkedOnly: false, hideCurrentAtStart: true)
 
     static func menuBarWindow() {
         let meeting = event(id: "standup", start: 60, minutes: 30)
@@ -254,6 +300,11 @@ struct CalendarTests {
         expect(
             automatic.event(from: [meeting], now: start) == nil,
             "Automatically clears it exactly at the start")
+
+        let showTimeLeft = MenuBarSummary(leadMinutes: 5, linkedOnly: false)
+        expect(
+            showTimeLeft.event(from: [meeting], now: start)?.id == "standup",
+            "Keep visible leaves the current event available for its time left")
 
         let lingering = MenuBarSummary(leadMinutes: 5, hideAfterMinutes: 5, linkedOnly: false)
         expect(
@@ -291,6 +342,34 @@ struct CalendarTests {
         expect(
             automatic.event(from: [event(id: "allday", start: 60, isAllDay: true)], now: now) == nil,
             "the menu bar reads the same agenda as everything else, so all-day events are out")
+    }
+
+    static func menuBarToday() {
+        let summary = MenuBarSummary(
+            leadMinutes: nil, hideAfterMinutes: nil, linkedOnly: false, calendar: calendar)
+        let morning = date(year: 2026, month: 8, day: 23, hour: 10)
+        let laterToday = event(id: "later", starting: date(year: 2026, month: 8, day: 23, hour: 15))
+        expect(
+            summary.event(from: [laterToday], now: morning)?.id == "later",
+            "Today carries an event later on the same day")
+
+        let justBeforeMidnight = date(year: 2026, month: 8, day: 23, hour: 23, minute: 30)
+        let midnight = event(id: "midnight", starting: date(year: 2026, month: 8, day: 24, hour: 0))
+        expect(
+            summary.event(from: [midnight], now: justBeforeMidnight)?.id == "midnight",
+            "Today keeps a meeting that starts exactly thirty minutes after midnight")
+        expect(
+            MenuBarSummary.hasUpcomingEvent(from: [midnight], now: justBeforeMidnight, calendar: calendar),
+            "the empty label agrees with the midnight grace")
+
+        let thirtyOneMinutesOut = date(year: 2026, month: 8, day: 23, hour: 23, minute: 29)
+        expect(
+            summary.event(from: [midnight], now: thirtyOneMinutesOut) == nil,
+            "Today does not keep tomorrow's event more than thirty minutes away")
+        expect(
+            !MenuBarSummary.hasUpcomingEvent(
+                from: [midnight], now: thirtyOneMinutesOut, calendar: calendar),
+            "the empty label appears once today is over and tomorrow is not imminent")
     }
 
     static func menuBarTitles() {
@@ -401,6 +480,29 @@ struct CalendarTests {
             "yesterday has no bucket")
     }
 
+    // MARK: - The read span
+
+    static func readSpan() {
+        let now = date(year: 2026, month: 8, day: 23, hour: 22)
+        let midnight = date(year: 2026, month: 8, day: 23, hour: 0)
+        expect(
+            MeetingSpan(includesTomorrow: false) == .today
+                && MeetingSpan(includesTomorrow: true) == .todayAndTomorrow,
+            "the setting names the span")
+        expect(
+            MeetingSpan.today.interval(from: now, calendar: calendar)
+                == DateInterval(start: midnight, end: date(year: 2026, month: 8, day: 24, hour: 0)),
+            "today alone runs midnight to midnight, from an evening `now`")
+        expect(
+            MeetingSpan.todayAndTomorrow.interval(from: now, calendar: calendar)
+                == DateInterval(start: midnight, end: date(year: 2026, month: 8, day: 25, hour: 0)),
+            "tomorrow adds a second day to the same start")
+        expect(
+            MeetingSpan.today.possessivePhrase == "today's"
+                && MeetingSpan.todayAndTomorrow.orPhrase == "today or tomorrow",
+            "the wording follows the span")
+    }
+
     // MARK: - Helpers
 
     static let epoch = Date(timeIntervalSinceReferenceDate: 0)
@@ -409,12 +511,16 @@ struct CalendarTests {
         epoch.addingTimeInterval(TimeInterval(minutes * 60))
     }
 
-    static func date(year: Int, month: Int, day: Int, hour: Int) -> Date {
+    static func date(year: Int, month: Int, day: Int, hour: Int, minute: Int = 0) -> Date {
         calendar.date(
-            from: DateComponents(year: year, month: month, day: day, hour: hour))!
+            from: DateComponents(year: year, month: month, day: day, hour: hour, minute: minute))!
     }
 
     static func link(_ text: String) -> MeetingLink? { MeetingLink.detect(in: text) }
+
+    static func hosted(_ text: String, _ account: String?) -> MeetingLink? {
+        MeetingLink.detect(fields: [text], account: account)
+    }
 
     static func provider(_ text: String) -> MeetingLink.Provider? { link(text)?.provider }
 
@@ -426,6 +532,17 @@ struct CalendarTests {
             id: id, title: id, start: at(minutes),
             end: at(minutes).addingTimeInterval(TimeInterval(duration * 60)),
             isAllDay: isAllDay, isDeclined: isDeclined, calendarID: "cal", calendarName: "Work",
+            calendarItemID: id, link: link)
+    }
+
+    static func event(
+        id: String, starting start: Date, minutes duration: Int = 30,
+        link: MeetingLink? = MeetingLink.detect(in: "https://example.com/x")
+    ) -> MeetingEvent {
+        MeetingEvent(
+            id: id, title: id, start: start,
+            end: start.addingTimeInterval(TimeInterval(duration * 60)),
+            isAllDay: false, isDeclined: false, calendarID: "cal", calendarName: "Work",
             calendarItemID: id, link: link)
     }
 

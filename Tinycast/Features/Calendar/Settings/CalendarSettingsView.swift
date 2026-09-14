@@ -9,15 +9,39 @@ struct CalendarSettingsView: View {
         @Bindable var settings = settings
         Form {
             FeatureSwitchSection(
-                header: "Calendar",
+                anchor: .calendarCalendar,
                 enableTitle: "Join meetings from Tinycast",
                 enableSubtitle:
-                    "Reads today's and tomorrow's events to find join links. Nothing leaves this Mac.",
+                    "Reads \(core.calendarCoordinator.span.possessivePhrase) events to find join "
+                    + "links. Nothing leaves this Mac.",
                 launcherSubtitle: "List individual meetings alongside apps and commands.",
                 isEnabled: enabledBinding,
                 showsInLauncher: $settings.calendarShowInLauncher)
 
-            if store.access == .denied {
+            Section {
+                Picker(selection: $settings.calendarLauncherLimit) {
+                    ForEach(CalendarLauncherLimit.allCases) { limit in
+                        Text(limit.title).tag(limit)
+                    }
+                } label: {
+                    SettingsRowTitle(.calendarSchedule, "Upcoming meetings in launcher")
+                    Text("Choose how many upcoming meetings appear alongside apps and commands.")
+                }
+            }
+            .settingsEnabled(settings.calendarEnabled && settings.calendarShowInLauncher)
+
+            if settings.calendarEnabled, store.access == .notDetermined {
+                Section {
+                    SettingsRow(
+                        title: "Calendar access is needed",
+                        subtitle: "Allow Tinycast to read events and find meeting links."
+                    ) {
+                        Button("Allow Calendar Access…") {
+                            core.calendarCoordinator.setCalendarEnabled(true)
+                        }
+                    }
+                }
+            } else if store.access == .denied {
                 Section {
                     SettingsRow(
                         title: "Calendar access is off",
@@ -29,68 +53,95 @@ struct CalendarSettingsView: View {
             }
 
             Section {
+                Toggle(isOn: $settings.calendarIncludesTomorrow) {
+                    SettingsRowTitle(.calendarSchedule, "Include Tomorrow's Events")
+                    Text("Read tomorrow as well as the rest of today, everywhere meetings appear.")
+                }
+            } header: {
+                SettingsSectionHeader(.calendarSchedule)
+            }
+            .settingsEnabled(settings.calendarEnabled)
+
+            Section {
                 Picker(selection: $settings.joinWindowMinutes) {
                     ForEach(JoinWindow.allCases) { window in
                         Text(window.title).tag(window)
                     }
                 } label: {
-                    Text("Show the join card")
+                    SettingsRowTitle(.calendarJoining, "Show the join card")
                     Text("How early the card appears, and how long past the start it stays.")
                 }
                 Toggle(isOn: $settings.autoJoinMeetings) {
-                    Text("Auto Join Meetings")
+                    SettingsRowTitle(.calendarJoining, "Auto Join Meetings")
                     Text("Automatically join meetings as they start.")
                 }
                 Toggle(isOn: $settings.autoJoinConfirms) {
-                    Text("Confirm before joining")
+                    SettingsRowTitle(.calendarJoining, "Confirm before joining")
                 }
                 .toggleStyle(.checkbox)
                 .settingsEnabled(settings.autoJoinMeetings)
                 Toggle(isOn: $settings.cameraPreview) {
-                    Text("Camera Preview")
+                    SettingsRowTitle(.calendarJoining, "Camera Preview")
                     Text("Open camera preview before joining meetings.")
                 }
             } header: {
-                Text("Joining")
+                SettingsSectionHeader(.calendarJoining)
             }
             .settingsEnabled(settings.calendarEnabled)
 
             Section {
+                Picker(selection: $settings.calendarMenuBarDisplay) {
+                    ForEach(CalendarMenuBarDisplay.allCases) { display in
+                        Text(display.title).tag(display)
+                    }
+                } label: {
+                    SettingsRowTitle(.calendarMenuBar, "Calendar in Menu Bar")
+                    Text(
+                        "Its own menu bar item, showing a meeting icon or its title and countdown."
+                    )
+                }
                 Picker(selection: $settings.menuBarEvents) {
                     ForEach(MenuBarEvents.allCases) { lead in
                         Text(lead.title).tag(lead)
                     }
                 } label: {
-                    Text("Show Events in Menu Bar")
-                    Text("Show current or upcoming events in the menu bar.")
+                    SettingsRowTitle(.calendarMenuBar, "Show Upcoming Events")
+                    Text(
+                        "When the next event reaches the menu bar. Today includes the next 30 "
+                            + "minutes after midnight."
+                    )
                 }
+                .settingsEnabled(settings.calendarMenuBarDisplay != .disabled)
                 Toggle(isOn: $settings.menuBarLinkedEventsOnly) {
-                    Text("Only show events with meetings")
+                    SettingsRowTitle(.calendarMenuBar, "Only show events with meetings")
                 }
                 .toggleStyle(.checkbox)
-                .settingsEnabled(settings.menuBarEvents != .never)
+                .settingsEnabled(settings.calendarMenuBarDisplay != .disabled)
                 Picker(selection: $settings.hideCurrentEvent) {
                     ForEach(HideCurrentEvent.allCases) { hide in
                         Text(hide.title).tag(hide)
                     }
                 } label: {
-                    Text("Hide Current Event")
-                    Text("Hide a started event automatically, or after the time you choose.")
+                    SettingsRowTitle(.calendarMenuBar, "Hide Current Event")
+                    Text("Choose whether to hide a started event or show its time left.")
                 }
-                .settingsEnabled(settings.menuBarEvents != .never)
+                .settingsEnabled(settings.calendarMenuBarDisplay != .disabled)
             } header: {
-                Text("Menu Bar")
+                SettingsSectionHeader(.calendarMenuBar)
             }
             .settingsEnabled(settings.calendarEnabled)
 
-            CalendarCommandsSection()
+            FeatureCommandsSection(owner: .calendar, anchor: .calendarCommands)
                 .settingsEnabled(settings.calendarEnabled)
 
             CalendarPickerSection()
                 .settingsEnabled(settings.calendarEnabled)
         }
         .formStyle(.grouped)
+        .settingsScrollTarget(.calendar)
         .releasesFocusOnOutsideClick()
+        // The snapshot is only reloaded while the feature runs, so a grant made in Settings lands here.
+        .onAppear { store.refreshAccess() }
     }
 
     /// Routed through the coordinator so enabling, which is also consent, confirms first.
@@ -102,51 +153,7 @@ struct CalendarSettingsView: View {
     }
 }
 
-/// The feature's own commands, so a shortcut or an alias is set beside what it acts on.
-private struct CalendarCommandsSection: View {
-    @Environment(VisibilityStore.self) private var visibility
-
-    private let entries = [
-        CommandID.joinNextMeeting, .mySchedule, .createEvent, .copyMeetingLink, .openInCalendar
-    ]
-    .compactMap(CommandCatalog.entry(for:))
-
-    var body: some View {
-        Section {
-            ForEach(entries) { entry in
-                SettingsRow(title: entry.name) {
-                    AppIconView(app: entry)
-                        .frame(width: Theme.Size.settingsRowIcon, height: Theme.Size.settingsRowIcon)
-                } trailing: {
-                    AliasField(entry: entry)
-                    if let action = entry.hotKeyAction {
-                        ShortcutRecorder(action: action)
-                    }
-                    Toggle("", isOn: visibilityBinding(entry))
-                        .labelsHidden()
-                        .toggleStyle(.checkbox)
-                        .accessibilityLabel("Show \(entry.name) in launcher")
-                }
-            }
-        } header: {
-            Text("Calendar")
-        } footer: {
-            Text("A shortcut works even when its command is hidden from the launcher.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func visibilityBinding(_ entry: AppEntry) -> Binding<Bool> {
-        Binding(
-            get: { visibility.isItemVisible(entry) },
-            set: { visibility.setItemVisible($0, for: entry) }
-        )
-    }
-}
-
-/// The per-calendar switches. Machine-local by nature, so they live on the store rather than
-/// `AppSettings`, and never travel in a settings backup.
+/// Machine-local by nature, so these live on the store and never travel in a backup.
 private struct CalendarPickerSection: View {
     @Environment(CalendarStore.self) private var store
     @State private var query = ""
@@ -179,7 +186,7 @@ private struct CalendarPickerSection: View {
                 .padding(.vertical, -Self.rowPadding)
             }
         } header: {
-            Text("Calendars")
+            SettingsSectionHeader(.calendarCalendars)
         }
     }
 

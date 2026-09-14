@@ -1,7 +1,6 @@
 import Foundation
 
-/// One generation at a time over the app-server: an ephemeral thread per request, streamed back as
-/// provider events. `connect` is the manager's readiness check; the runner never owns the login.
+/// One generation at a time over the app-server, streamed back as provider events.
 @MainActor
 final class CodexTurnRunner {
     private static let safetyInstructions = """
@@ -26,10 +25,8 @@ final class CodexTurnRunner {
     private var activeToken: TurnToken?
     private var activeThreadID: String?
     private var activeTurnID: String?
-    /// A Stop that beat the turn's ID leaves its thread armed here: the server is still working, so
-    /// the first ID that names that turn — notification or response — spends the interrupt.
+    /// A Stop that beat the turn's ID arms its thread; the first ID to name it spends the Stop.
     private var pendingInterruptThreadID: String?
-    private var appliedEffort: String?
 
     init(client: CodexAppServerClient) {
         self.client = client
@@ -56,13 +53,11 @@ final class CodexTurnRunner {
         interruptActiveTurn()
     }
 
-    /// Drops the live turn and the effort written into the server's config; the next turn rewrites it.
     func reset() {
         interruptActiveTurn()
-        appliedEffort = nil
     }
 
-    func handle(method: String, params: [String: CodexValue]) {
+    func handle(method: String, params: [String: JSONValue]) {
         let thread = params["threadId"]?.stringValue
         if let thread, thread == pendingInterruptThreadID {
             handleArmed(method: method, params: params, threadID: thread)
@@ -97,7 +92,7 @@ final class CodexTurnRunner {
                 activeContinuation?.finish(
                     throwing: AIProviderError.responseFailed(
                         turn["error"]?.objectValue?["message"]?.stringValue
-                            ?? "ChatGPT could not finish the response."))
+                            ?? "Codex could not finish the response."))
             default:
                 activeContinuation?.finish(
                     throwing: AIProviderError.responseFailed("The response was interrupted."))
@@ -108,17 +103,16 @@ final class CodexTurnRunner {
             activeContinuation?.finish(
                 throwing: AIProviderError.responseFailed(
                     params["error"]?.objectValue?["message"]?.stringValue
-                        ?? "ChatGPT returned an error."))
+                        ?? "Codex returned an error."))
             clearActiveTurn()
         default:
             break
         }
     }
 
-    /// A thread Stop already dropped. Nothing streams from it — it is watched only for the turn ID
-    /// that Stop lacked, and let go once the turn ends on its own.
+    /// A thread Stop already dropped, watched only for the turn ID that Stop lacked.
     private func handleArmed(
-        method: String, params: [String: CodexValue], threadID: String
+        method: String, params: [String: JSONValue], threadID: String
     ) {
         switch method {
         case "turn/started":
@@ -156,7 +150,7 @@ final class CodexTurnRunner {
             try Task.checkCancellation()
             guard !model.isEmpty else {
                 throw AIProviderError.unavailable(
-                    "No ChatGPT model is available for this account.")
+                    "No Codex model is available for this account.")
             }
             activeContinuation?.finish(
                 throwing: AIProviderError.responseFailed(
@@ -167,18 +161,7 @@ final class CodexTurnRunner {
 
             guard models.isEmpty || models.contains(where: { $0.id == model }) else {
                 throw AIProviderError.unavailable(
-                    "\(model) is no longer available — choose another model in Settings.")
-            }
-
-            if let effort, effort != appliedEffort {
-                _ = try await client.request(
-                    method: "config/value/write",
-                    params: [
-                        "keyPath": "model_reasoning_effort",
-                        "value": effort,
-                        "mergeStrategy": "replace"
-                    ])
-                appliedEffort = effort
+                    "\(model) is no longer available. Choose another model in Settings.")
             }
 
             let threadResponse = try await client.request(
@@ -189,7 +172,7 @@ final class CodexTurnRunner {
                     "approvalPolicy": "never",
                     "sandbox": "read-only",
                     "ephemeral": true,
-                    // Thread-scoped, in Tinycast's private Codex home: never the user's ~/.codex.
+                    // Thread-scoped so this request never writes the user's saved web-search choice.
                     "config": ["web_search": request.webSearch ? "live" : "disabled"],
                     "developerInstructions": developerInstructions(for: request)
                 ])
@@ -199,9 +182,7 @@ final class CodexTurnRunner {
                 throw CodexAppServerClient.ClientError.requestFailed(
                     "Codex returned no generation thread.")
             }
-            // Ownership can change while `thread/start` is in flight: a Stop's cancellation and the
-            // real response race to resume this. Claiming the thread after losing the turn would aim
-            // `isActive` and every notification guard at a stream nobody is reading.
+            // Claiming the thread after losing the turn aims `isActive` at a stream nobody reads.
             guard activeToken === token, !Task.isCancelled else { return }
             activeThreadID = threadID
 
@@ -212,16 +193,17 @@ final class CodexTurnRunner {
                     params: ["threadId": threadID, "items": history])
             }
             // An unstructured child survives Stop, so the turn ID it returns can be interrupted.
+            var turnParameters: [String: Any] = [
+                "threadId": threadID,
+                "model": model,
+                "approvalPolicy": "never",
+                "sandboxPolicy": ["type": "readOnly", "networkAccess": false],
+                "input": turnInput(for: request.messages[promptIndex])
+            ]
+            if let effort { turnParameters["effort"] = effort }
             let turnTask = Task { [client] in
                 try await client.request(
-                    method: "turn/start",
-                    params: [
-                        "threadId": threadID,
-                        "model": model,
-                        "approvalPolicy": "never",
-                        "sandboxPolicy": ["type": "readOnly", "networkAccess": false],
-                        "input": turnInput(for: request.messages[promptIndex])
-                    ])
+                    method: "turn/start", params: turnParameters)
             }
             let turnID = try await turnTask.value["turn"]?.objectValue?["id"]?.stringValue
             guard activeToken === token, !Task.isCancelled else {
@@ -289,15 +271,14 @@ final class CodexTurnRunner {
         clearActiveTurn()
         guard let threadID else { return }
         guard let turnID else {
-            // Stop beat the ID: arm the thread rather than lose the turn the server is still running.
+            // Stop beat the ID: arm the thread rather than lose the turn the server still runs.
             pendingInterruptThreadID = threadID
             return
         }
         interrupt(threadID: threadID, turnID: turnID)
     }
 
-    /// `turn/started` and the `turn/start` response both name the turn, and either may arrive first;
-    /// disarming here is what keeps a Stopped turn from being interrupted twice.
+    /// Either naming of the turn may arrive first; disarming keeps a Stop from firing twice.
     private func interruptOnce(threadID: String, turnID: String) {
         guard pendingInterruptThreadID == threadID else { return }
         pendingInterruptThreadID = nil
@@ -315,7 +296,7 @@ final class CodexTurnRunner {
     private func clearActiveTurn() {
         let wasLive = activeContinuation != nil
         activeContinuation?.finish(
-            throwing: AIProviderError.responseFailed("The ChatGPT connection was interrupted."))
+            throwing: AIProviderError.responseFailed("The Codex connection was interrupted."))
         activeContinuation = nil
         activeToken = nil
         activeThreadID = nil

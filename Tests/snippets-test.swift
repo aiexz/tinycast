@@ -10,19 +10,23 @@ struct SnippetsTests {
     static var passes = 0
 
     static func main() async throws {
+        // The in-process delivery tier drives a real text view, which needs AppKit awake.
+        _ = NSApplication.shared
         testIdentityAndRevision()
         testRaycastImport()
         try testMarkdownCodec()
         try testRepositoryStorage()
         try await testRepositoryConcurrency()
         try await testDeliveryQueueAndPasteboard()
+        await testCopySelectionFallback()
         try await testStoreWatcher()
         testTemplateExpansion()
         testDynamicPlaceholders()
         testTemplateEncodingAndSelectionAlias()
         testKeywordPolicy()
         testKeywordLifecycle()
-        testKeywordListenerLifecycle()
+        await testKeywordListenerLifecycle()
+        testOwnEditorInjection()
 
         print(failures == 0 ? "\nALL PASSED" : "\n\(failures) FAILED")
         exit(failures == 0 ? 0 : 1)
@@ -59,7 +63,7 @@ struct SnippetsTests {
         check(
             "Raycast import keeps valid entries and source order",
             imported.map(\.name) == ["Email", "Multiline 雪", "Blank Keyword"])
-        // The remaining assertions index into the result, so a wrong count has to fail rather than trap.
+        // The assertions index the result, so a wrong count must fail rather than trap.
         guard imported.count == 3 else { return }
         check("Raycast import preserves text and Unicode", imported[1].text == "First\nSecond")
         check(
@@ -173,7 +177,7 @@ struct SnippetsTests {
         expectParseError(
             "unknown frontmatter key is rejected", content: "---\nunknown: \"value\"\n---\n", fileURL: fileURL
         )
-        // These keys were removed or renamed; a file still carrying one is reported, not silently half-loaded.
+        // A file still carrying a removed key is reported, not silently half-loaded.
         expectParseError(
             "the removed category key is rejected", content: "---\ncategory: \"Work\"\n---\n",
             fileURL: fileURL)
@@ -336,7 +340,7 @@ struct SnippetsTests {
         } catch SnippetRepository.RepositoryError.conflict {
             check("stale deletes report a revision conflict", true)
         }
-        // Everything below needs the reloaded record; report the loss instead of trapping, and keep the later contracts running.
+        // Report the loss instead of trapping, and keep the later contracts running.
         if let currentSaved = try crudRepository.load().records.first(where: { $0.id == saved.id }) {
             try crudRepository.delete(
                 fileURL: currentSaved.fileURL,
@@ -556,8 +560,101 @@ struct SnippetsTests {
         }
     }
 
+    /// The dangerous case is a copy that never lands, returning what the reader last copied.
+    private static func testCopySelectionFallback() async {
+        let injector = TextInjector(clipboardManager: ClipboardManager(), settings: AppSettings())
+        let backing = NSPasteboard(name: .init("tinycast-copy-tests-\(UUID().uuidString)"))
+        defer { backing.releaseGlobally() }
+        let pasteboard = StubPasteboard(backing: backing)
+
+        func seed(_ text: String) {
+            let item = NSPasteboardItem()
+            item.setString(text, forType: .string)
+            backing.clearContents()
+            _ = backing.writeObjects([item])
+        }
+
+        seed("Something the reader copied earlier")
+        let unchanged = await injector.copySelection(from: nil, pasteboard: pasteboard)
+        check("a copy that never lands returns nothing, not the stale clipboard", unchanged == nil)
+        check(
+            "the reader's clipboard survives a failed copy",
+            backing.string(forType: .string) == "Something the reader copied earlier")
+
+        seed("Original")
+        let writer = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(60))
+            let item = NSPasteboardItem()
+            item.setString("the selection", forType: .string)
+            backing.clearContents()
+            _ = backing.writeObjects([item])
+        }
+        let copied = await injector.copySelection(from: nil, pasteboard: pasteboard)
+        _ = await writer.result
+        check("a copy that lands is read back: \(copied ?? "nil")", copied == "the selection")
+        check(
+            "the reader's clipboard is restored afterwards",
+            backing.string(forType: .string) == "Original")
+    }
+
+    /// Our panels never activate, so the frontmost app is not where the typist's caret is.
+    private static func testOwnEditorInjection() {
+        let editor = HarnessEditor(frame: NSRect(x: 0, y: 0, width: 320, height: 120))
+
+        // The tap sees the keystroke first, so the view is a character behind at match time.
+        editor.string = "!si"
+        editor.setSelectedRange(NSRange(location: 3, length: 0))
+        check(
+            "a document shorter than the keyword reads as pending, not absent",
+            editor.keywordReplacementState(expectedKeyword: "!sig", keywordLength: 4) == .pending)
+
+        editor.string = "Regards, !si"
+        editor.setSelectedRange(NSRange(location: 12, length: 0))
+        check(
+            "the same stale view behind existing text reads as a mismatch, not a lag",
+            editor.keywordReplacementState(expectedKeyword: "!sig", keywordLength: 4) == .rejected)
+
+        editor.string = "Regards, !sig"
+        editor.setSelectedRange(NSRange(location: 13, length: 0))
+        check(
+            "the keyword resolves once AppKit has delivered the keystroke",
+            editor.keywordReplacementState(expectedKeyword: "!sig", keywordLength: 4)
+                == .matched(NSRange(location: 9, length: 4)))
+
+        editor.inject(InjectedText("Ada Lovelace"), over: NSRange(location: 9, length: 4))
+        check(
+            "a converged keyword is replaced in place",
+            editor.string == "Regards, Ada Lovelace")
+        check(
+            "the caret lands after the text the snippet inserted",
+            editor.selectedRange() == NSRange(location: 21, length: 0))
+
+        editor.string = "Regards, !xyz"
+        editor.setSelectedRange(NSRange(location: 13, length: 0))
+        check(
+            "enough text that is not the keyword is a mismatch, never a wait",
+            editor.keywordReplacementState(expectedKeyword: "!sig", keywordLength: 4) == .rejected)
+
+        editor.string = "wrap me"
+        editor.setSelectedRange(NSRange(location: 0, length: 7))
+        check(
+            "a zero-length keyword takes the selection as its replacement range",
+            editor.keywordReplacementState(expectedKeyword: nil, keywordLength: 0)
+                == .matched(NSRange(location: 0, length: 7)))
+
+        editor.inject(
+            InjectedText("<b></b>", cursorOffsetFromEnd: 4), over: NSRange(location: 0, length: 7))
+        check(
+            "the selection is replaced and the caret honours the template's cursor offset",
+            editor.string == "<b></b>" && editor.selectedRange() == NSRange(location: 3, length: 0))
+
+        check(
+            "the caret offset counts UTF-16 units, not characters",
+            InjectedText("\u{1F1F3}\u{1F1F1} done", cursorOffsetFromEnd: 5).caretPrefixLength == 4)
+    }
+
     private static func testDeliveryQueueAndPasteboard() async throws {
-        let queue = SnippetDeliveryQueue()
+        let queue = DeliveryQueue()
         var order: [String] = []
         queue.enqueue(isAutomatic: false) {
             order.append("first-start")
@@ -584,35 +681,121 @@ struct SnippetsTests {
         check("automatic cancellation cannot run a queued stale delivery", !automaticRan)
 
         var completionCount = 0
-        let completion = SnippetDeliveryCompletion { completionCount += 1 }
+        var failureCount = 0
+        let completion = DeliveryCompletion(
+            onDelivered: { completionCount += 1 }, onFailed: { failureCount += 1 })
         completion.confirm()
         completion.confirm()
+        completion.settle()
         check(
             "delivery completion invokes its callback exactly once after confirmation",
-            completion.isConfirmed && completionCount == 1)
+            completion.isConfirmed && completionCount == 1 && failureCount == 0)
+
+        var unconfirmedFailures = 0
+        let unconfirmed = DeliveryCompletion(onFailed: { unconfirmedFailures += 1 })
+        unconfirmed.settle()
+        unconfirmed.settle()
+        unconfirmed.confirm()
+        check(
+            "a delivery that returned early reports failure exactly once and stays unconfirmed",
+            !unconfirmed.isConfirmed && unconfirmedFailures == 1)
 
         check(
             "unavailable AX text attributes use the event delivery fallback",
-            SnippetAccessibilityReplacement.unavailable.fallsBackToEvents)
+            AccessibilityReplacement.unavailable.fallsBackToEvents)
         check(
             "a rejected AX keyword replacement fails closed instead of deleting by events",
-            !SnippetAccessibilityReplacement.rejected.fallsBackToEvents)
+            !AccessibilityReplacement.rejected.fallsBackToEvents)
+
+        check(
+            "an AX keyword one character behind the event stream remains pending",
+            TextReplacementPolicy.keywordState(
+                value: "!tcaxprob",
+                selectedRange: NSRange(location: 9, length: 0),
+                keyword: "!tcaxprobe") == .pending)
+        check(
+            "a converged AX keyword resolves to its exact replacement range",
+            TextReplacementPolicy.keywordState(
+                value: "prefix !tcaxprobe",
+                selectedRange: NSRange(location: 17, length: 0),
+                keyword: "!tcaxprobe") == .matched(NSRange(location: 7, length: 10)))
+        check(
+            "an AX state with enough text but the wrong suffix is a genuine rejection",
+            TextReplacementPolicy.keywordState(
+                value: "prefix !tcaxwrong",
+                selectedRange: NSRange(location: 17, length: 0),
+                keyword: "!tcaxprobe") == .rejected)
+        check(
+            "an empty editor AX snapshot remains pending instead of becoming a false mismatch",
+            TextReplacementPolicy.keywordState(
+                value: "",
+                selectedRange: NSRange(location: 0, length: 0),
+                keyword: "!tcaxprobe") == .pending)
+        check(
+            "a non-empty selection is a mismatch rather than a lagging caret",
+            TextReplacementPolicy.keywordState(
+                value: "prefix !tcaxprobe",
+                selectedRange: NSRange(location: 7, length: 10),
+                keyword: "!tcaxprobe") == .rejected)
+        check(
+            "AX replacement confirmation requires the observable text to actually change",
+            TextReplacementPolicy.confirmsReplacement(
+                originalValue: "!tcprobe",
+                replacementRange: NSRange(location: 0, length: 8),
+                insertedText: "PROBE_OK",
+                observedValue: "PROBE_OK"))
+        check(
+            "an AX setter success with unchanged text is not accepted as delivery",
+            !TextReplacementPolicy.confirmsReplacement(
+                originalValue: "!tcprobe",
+                replacementRange: NSRange(location: 0, length: 8),
+                insertedText: "PROBE_OK",
+                observedValue: "!tcprobe"))
+        check(
+            "an AX write that lands somewhere unexpected is not accepted as delivery",
+            !TextReplacementPolicy.confirmsReplacement(
+                originalValue: "keep !tcprobe",
+                replacementRange: NSRange(location: 5, length: 8),
+                insertedText: "PROBE_OK",
+                observedValue: "PROBE_OK !tcprobe"))
+        check(
+            "an unreadable value after the write is not accepted as delivery",
+            !TextReplacementPolicy.confirmsReplacement(
+                originalValue: "!tcprobe",
+                replacementRange: NSRange(location: 0, length: 8),
+                insertedText: "PROBE_OK",
+                observedValue: nil))
+
+        check(
+            "a Unicode keystroke never carries more than Blink's four-unit cap",
+            UnicodeTypingChunk.split(String(repeating: "a", count: 30))
+                .allSatisfy { $0.count <= UnicodeTypingChunk.maxUTF16Units })
+        check(
+            "chunked Unicode keystrokes reassemble into the original text",
+            UnicodeTypingChunk.split("Fix this sentence, 雪が降る 👨‍👩‍👧 — done.")
+                .flatMap { $0 } == Array("Fix this sentence, 雪が降る 👨‍👩‍👧 — done.".utf16))
+        check(
+            "a surrogate pair is never split across two keystrokes",
+            UnicodeTypingChunk.split("ab👩🏽‍🚀").allSatisfy { chunk in
+                String(decoding: chunk, as: UTF16.self).unicodeScalars.allSatisfy { $0.value != 0xFFFD }
+            })
+        check("empty text produces no keystrokes", UnicodeTypingChunk.split("").isEmpty)
         check(
             "unreadable AX state accepts a posted paste after the conservative delay",
-            SnippetPasteConfirmationPolicy.acceptsUnconfirmedDelivery(
+            PasteConfirmationPolicy.acceptsUnconfirmedDelivery(
                 attempt: 15,
                 hadPreviousState: true,
                 readStateAfterPaste: false))
         check(
             "readable unchanged AX state is not treated as a confirmed paste",
-            !SnippetPasteConfirmationPolicy.acceptsUnconfirmedDelivery(
+            !PasteConfirmationPolicy.acceptsUnconfirmedDelivery(
                 attempt: 79,
                 hadPreviousState: true,
                 readStateAfterPaste: true))
 
         let backingPasteboard = NSPasteboard(
             name: .init("tinycast-snippets-tests-\(UUID().uuidString)"))
-        let pasteboard = CountingPasteboard(backing: backingPasteboard)
+        let pasteboard = StubPasteboard(backing: backingPasteboard)
         defer { backingPasteboard.releaseGlobally() }
         let customType = NSPasteboard.PasteboardType("com.example.custom")
         let firstItem = NSPasteboardItem()
@@ -629,17 +812,13 @@ struct SnippetsTests {
             text: "Temporary",
             pasteboard: pasteboard)
         check(
-            "temporary pasteboard ownership preserves the original item shape",
+            "the lent pasteboard carries the text and no representation of the original",
             lease?.isOwned == true
                 && pasteboard.string(forType: .string) == "Temporary"
-                && pasteboard.pasteboardItems?.count == 2
-                && pasteboard.pasteboardItems?[0].data(forType: customType)
-                    == Data([0, 1, 2, 3])
-                && pasteboard.pasteboardItems?[1].data(forType: secondType)
-                    == Data([4, 5, 6])
+                && pasteboard.pasteboardItems?.count == 1
+                && pasteboard.pasteboardItems?[0].data(forType: customType) == nil
+                && pasteboard.pasteboardItems?[0].data(forType: secondType) == nil
         )
-        let clearCountBeforeRestore = pasteboard.clearCount
-        let writeCountBeforeRestore = pasteboard.writeCount
         let restoreResult = lease?.restoreIfOwned()
         let restoredItems = pasteboard.pasteboardItems
         check(
@@ -650,9 +829,10 @@ struct SnippetsTests {
                 && restoredItems?[0].data(forType: customType) == Data([0, 1, 2, 3])
                 && restoredItems?[1].data(forType: secondType) == Data([4, 5, 6]))
         check(
-            "pasteboard restoration does not clear before a fallible write",
-            pasteboard.clearCount == clearCountBeforeRestore
-                && pasteboard.writeCount == writeCountBeforeRestore)
+            "pasteboard restoration leaves no Tinycast marker on the restored clipboard",
+            restoredItems?.allSatisfy {
+                !$0.types.contains(ClipboardManager.internalType)
+            } == true)
 
         pasteboard.writeFailuresRemaining = 1
         var recoveredMutationCount: Int?
@@ -679,23 +859,34 @@ struct SnippetsTests {
                 && pasteboard.string(forType: .string) == "Newer copy")
 
         _ = pasteboard.replaceObjects([])
+        let emptyLease = TemporaryPasteboardLease.begin(
+            text: "Temporary from empty",
+            pasteboard: pasteboard)
         check(
-            "an empty clipboard declines temporary ownership for the Unicode fallback",
-            TemporaryPasteboardLease.begin(
-                text: "Temporary from empty",
-                pasteboard: pasteboard) == nil
+            "an empty clipboard still lends a temporary string to paste",
+            emptyLease?.isOwned == true
+                && pasteboard.string(forType: .string) == "Temporary from empty")
+        check(
+            "restoring a borrowed empty clipboard leaves it empty again",
+            emptyLease?.restoreIfOwned() != nil
                 && pasteboard.pasteboardItems?.isEmpty != false)
 
         let imageOnlyItem = NSPasteboardItem()
         imageOnlyItem.setData(Data([9, 8, 7]), forType: .png)
         _ = pasteboard.replaceObjects([imageOnlyItem])
+        let imageLease = TemporaryPasteboardLease.begin(
+            text: "Temporary over image",
+            pasteboard: pasteboard)
         check(
-            "a non-text clipboard declines temporary ownership without changing its payload",
-            TemporaryPasteboardLease.begin(
-                text: "Temporary over image",
-                pasteboard: pasteboard) == nil
+            "a non-text clipboard still lends a temporary string to paste",
+            imageLease?.isOwned == true
+                && pasteboard.string(forType: .string) == "Temporary over image")
+        check(
+            "restoring a borrowed image clipboard returns the original payload",
+            imageLease?.restoreIfOwned() != nil
                 && pasteboard.pasteboardItems?.count == 1
-                && pasteboard.data(forType: .png) == Data([9, 8, 7]))
+                && pasteboard.data(forType: .png) == Data([9, 8, 7])
+                && pasteboard.string(forType: .string) == nil)
     }
 
     private static func testStoreWatcher() async throws {
@@ -1000,7 +1191,7 @@ struct SnippetsTests {
         check("reference depth limit leaves the unexpanded token visible", depthResult.text == "{snippet:S6}")
     }
 
-    /// The Raycast-compatible placeholder set: every token, parameter and modifier, against an injected clock, locale, clipboard history and UUID source.
+    /// Every token, parameter and modifier, against injected clock, locale and UUIDs.
     private static func testDynamicPlaceholders() {
         var calendar = Calendar(identifier: .gregorian)
         let timeZone = TimeZone(secondsFromGMT: 0)!
@@ -1064,6 +1255,21 @@ struct SnippetsTests {
         check(
             "format still applies with an offset",
             expand("{date offset=\"-1d\" format=\"yyyy-MM-dd\"}").text == "2026-07-23")
+        check(
+            "a bare format needs no quotes",
+            expand("{date format=yyyy-MM-dd}").text == "2026-07-24")
+        check(
+            "a bare format keeps its spaces",
+            expand("{date format=MMMM d, yyyy}").text == "July 24, 2026")
+        check(
+            "a bare value ends at the next parameter",
+            expand("{date format=MMM d offset=+1d}").text == "Jul 25")
+        check(
+            "a bare value trailing another parameter keeps its spaces",
+            expand("{date offset=+1d format=MMM d}").text == "Jul 25")
+        check(
+            "a bare format with no value leaves the token literal",
+            expand("{date format=}").text == "{date format=}")
 
         // UUID comes from the injected source, once per token.
         check("each uuid token draws a fresh value", expand("{uuid}|{uuid}").text == "uuid-1|uuid-2")
@@ -1131,6 +1337,26 @@ struct SnippetsTests {
             expand("{argument name=\"Tone\" options=\", \"}").text
                 == "{argument name=\"Tone\" options=\", \"}")
 
+        // What the header's argument fields are built from, without expanding anything else.
+        check(
+            "declared arguments are listed in written order, once each",
+            SnippetTemplateEngine.declaredArguments(
+                in: "{argument name=\"Repo\"}/{argument name=\"Branch\"}?q={argument name=\"Repo\"}"
+            ).map(\.name) == ["Repo", "Branch"])
+        check(
+            "an argument that answers itself is never asked for",
+            SnippetTemplateEngine.declaredArguments(
+                in: "{argument name=\"Tone\" default=\"happy\"}"
+            ).isEmpty)
+        check(
+            "options travel with a declared argument as they do with a missing one",
+            SnippetTemplateEngine.declaredArguments(
+                in: "{argument name=\"Tone\" options=\"happy, sad\"}")
+                == [.init(name: "Tone", options: ["happy", "sad"])])
+        check(
+            "a template that reads only the clipboard declares no arguments",
+            SnippetTemplateEngine.declaredArguments(in: "https://x.dev/?q={clipboard}").isEmpty)
+
         // Raycast's snippet spelling resolves like Tinycast's.
         let child = record("/tmp/ph-child.md", Snippet(name: "Child", text: "nested"))
         let byName = record("/tmp/ph-name.md", Snippet(name: "ByName", text: "{snippet name=\"Child\"}"))
@@ -1184,8 +1410,7 @@ struct SnippetsTests {
             ).text == "[]")
     }
 
-    /// The engine is shared with Quicklinks: it also expands a bare string, can percent-encode every
-    /// value it produces, and accepts Raycast's `{selectedText}` spelling of `{selection}`.
+    /// Shared with Quicklinks: bare strings, encoding, and Raycast's `{selectedText}`.
     private static func testTemplateEncodingAndSelectionAlias() {
         var calendar = Calendar(identifier: .gregorian)
         let timeZone = TimeZone(secondsFromGMT: 0)!
@@ -1280,6 +1505,20 @@ struct SnippetsTests {
         check(
             "usesSelection parses rather than searches, so a malformed token does not count",
             !SnippetTemplateEngine.usesSelection("{selection offset=1}"))
+
+        // {query} is Raycast's spelling of {argument}.
+        check(
+            "query resolves as an argument named Argument",
+            expand("{query}", arguments: ["Argument": "hi"]).text == "hi")
+        check(
+            "the query alias is case-insensitive like every other token name",
+            expand("{Query}", arguments: ["Argument": "hi"]).text == "hi")
+        check(
+            "the query alias keeps named parameters",
+            expand("{query name=\"Keyword\"}", arguments: ["Keyword": "x"]).text == "x")
+        check(
+            "a parameter named query is still an argument, not the alias",
+            expand("{argument name=\"query\"}", arguments: ["query": "kept"]).text == "kept")
     }
 
     private static func testKeywordPolicy() {
@@ -1487,7 +1726,7 @@ struct SnippetsTests {
                 && rapidOn.status == .needsAccessibility)
     }
 
-    private static func testKeywordListenerLifecycle() {
+    private static func testKeywordListenerLifecycle() async {
         let permissions = FakeSnippetPermissions()
         let tap = FakeSnippetKeywordTapController()
         tap.installFailuresRemaining = 1
@@ -1498,8 +1737,9 @@ struct SnippetsTests {
             now: { Date(timeIntervalSince1970: 1_000) },
             syntheticEventTag: 123,
             logsTapFailures: false)
+        var activityCount = 0
 
-        listener.start { _, _, _, _ in }
+        listener.start(onUserActivity: { activityCount += 1 }, onMatch: { _, _, _, _ in })
         check(
             "real listener waits without permissions and does not install",
             listener.status == .needsAccessibility && tap.installCount == 0)
@@ -1518,10 +1758,70 @@ struct SnippetsTests {
                 && tap.installCount == 2
                 && tap.state == .active)
 
-        listener.start { _, _, _, _ in }
+        listener.processEvent(
+            typeRaw: CGEventType.keyDown.rawValue,
+            keyCode: 0,
+            flagsRaw: 0,
+            text: "x",
+            eventUserData: 0,
+            secureEventInputEnabled: false)
+        listener.processEvent(
+            typeRaw: CGEventType.keyDown.rawValue,
+            keyCode: 0,
+            flagsRaw: 0,
+            text: "x",
+            eventUserData: 123,
+            secureEventInputEnabled: false)
+        check(
+            "real user input invalidates pending automatic delivery while Tinycast events do not",
+            activityCount == 1)
+
+        listener.isPromptingForArguments = true
+        for text in ["a", "b", "c", "d", "\r"] {
+            listener.processEvent(
+                typeRaw: CGEventType.keyDown.rawValue,
+                keyCode: 0,
+                flagsRaw: 0,
+                text: text,
+                eventUserData: 0,
+                secureEventInputEnabled: false)
+        }
+        listener.userActivity()
+        check("argument typing and Expand clicks preserve pending delivery", activityCount == 1)
+        listener.isPromptingForArguments = false
+        listener.userActivity()
+        check("user activity cancels delivery again after the prompt", activityCount == 2)
+
+        listener.start(onUserActivity: { activityCount += 1 }, onMatch: { _, _, _, _ in })
         check(
             "real listener repeated start does not install a second tap",
             listener.status == .active && tap.installCount == 2)
+
+        let snippet = record(
+            "/tmp/argument-listener.md", Snippet(name: "Test", text: "{argument}", keyword: "#test"))
+        listener.update([snippet])
+        var matches = 0
+        listener.start(onUserActivity: { activityCount += 1 }, onMatch: { _, _, _, _ in matches += 1 })
+        func typeKeyword() {
+            for character in "#test" {
+                listener.processEvent(
+                    typeRaw: CGEventType.keyDown.rawValue, keyCode: 0, flagsRaw: 0,
+                    text: String(character), eventUserData: 0, secureEventInputEnabled: false)
+            }
+        }
+        typeKeyword()
+        check("keyword callbacks run after the triggering event returns", matches == 0)
+        try? await Task.sleep(for: .milliseconds(10))
+        check("a queued keyword match is delivered", matches == 1)
+        typeKeyword()
+        listener.userActivity()
+        try? await Task.sleep(for: .milliseconds(10))
+        check("activity cancels a match before its callback runs", matches == 1)
+        listener.isPromptingForArguments = true
+        typeKeyword()
+        listener.isPromptingForArguments = false
+        try? await Task.sleep(for: .milliseconds(10))
+        check("argument text cannot trigger nested expansion", matches == 1)
 
         tap.state = .disabled
         listener.healthCheck()
@@ -1557,7 +1857,7 @@ struct SnippetsTests {
         check(
             "real listener stop is authoritative",
             listener.status == .off && tap.state == .absent)
-        listener.start { _, _, _, _ in }
+        listener.start(onUserActivity: { activityCount += 1 }, onMatch: { _, _, _, _ in })
         listener.stop()
         check(
             "real listener rapid on and off leaves no tap",
@@ -1606,10 +1906,8 @@ struct SnippetsTests {
 }
 
 @MainActor
-private final class CountingPasteboard: SnippetPasteboardAccess {
+private final class StubPasteboard: PasteboardAccess {
     let backing: NSPasteboard
-    private(set) var clearCount = 0
-    private(set) var writeCount = 0
     var writeFailuresRemaining = 0
 
     init(backing: NSPasteboard) {
@@ -1621,12 +1919,10 @@ private final class CountingPasteboard: SnippetPasteboardAccess {
 
     @discardableResult
     func clearContents() -> Int {
-        clearCount += 1
-        return backing.clearContents()
+        backing.clearContents()
     }
 
     func writeObjects(_ objects: [any NSPasteboardWriting]) -> Bool {
-        writeCount += 1
         if writeFailuresRemaining > 0 {
             writeFailuresRemaining -= 1
             return false
@@ -1668,9 +1964,10 @@ enum Permissions {
 enum Paster {
     static let tinycastEventTag: Int64 = 0x54494E59
     @MainActor static func postCommandV(toPid pid: pid_t? = nil) {}
+    @MainActor static func postCommandC(toPid pid: pid_t? = nil) {}
 }
 
-/// Deterministic `{uuid}` source. `@unchecked Sendable` with a lock because `makeUUID` is a `@Sendable` closure.
+/// Deterministic `{uuid}` source; the lock is why it is `@unchecked Sendable`.
 private final class UUIDSequence: @unchecked Sendable {
     private let lock = NSLock()
     private var count = 0
@@ -1719,3 +2016,6 @@ private final class FakeSnippetKeywordTapController: SnippetKeywordTapControllin
         state = .absent
     }
 }
+
+/// Stands in for `NoteTextView`: the conformance is the whole opt-in.
+private final class HarnessEditor: NSTextView, InjectableTextView {}

@@ -1,7 +1,6 @@
 import Foundation
 
-/// Guards the registry model and the two response parsers — the parts of installing from a registry
-/// that can be checked without a network. Payloads are trimmed captures of the real responses.
+/// The parts of installing from a registry that can be checked without a network.
 @main
 @MainActor
 struct ExtensionStoreTests {
@@ -12,7 +11,7 @@ struct ExtensionStoreTests {
         registryParsing()
         registryDefaults()
         storeResponse()
-        gitHubContents()
+        gitHubTree()
         manifestSummary()
         packageManagers()
         abbreviation()
@@ -132,32 +131,39 @@ struct ExtensionStoreTests {
         let url = ExtensionStoreResponse.searchURL(query: "co ffee", page: 2)?.absoluteString ?? ""
         check("the query is escaped", url.contains("q=co%20ffee"))
         check("the page is passed", url.contains("page=2"))
-        // Tinycast is macOS-only; a windows-only extension is noise.
-        check("macOS is requested", url.contains("platform=macos"))
+        // Case-sensitive: "macos" matches only extensions listing no platforms.
+        check("macOS is requested, as the endpoint spells it", url.contains("platform=macOS"))
     }
 
     // MARK: - A GitHub registry
 
-    static func gitHubContents() {
-        print("\n# github contents")
+    static func gitHubTree() {
+        print("\n# github tree")
         let payload = """
-            [{"name":"src","path":"extensions/coffee/src","type":"dir","download_url":null},
-             {"name":"package.json","path":"extensions/coffee/package.json","type":"file",
-              "size":6486,"download_url":"https://raw.example/package.json"}]
+            {"tree":[{"path":"src","type":"tree","sha":"t1","mode":"040000"},
+                     {"path":"package.json","type":"blob","sha":"b1","mode":"100644"},
+                     {"path":"bin/helper","type":"blob","sha":"b2","mode":"100755"},
+                     {"path":"src/index.ts","type":"blob","sha":"b3","mode":"100644"}],"truncated":false}
             """
-        guard let entries = try? ExtensionStoreResponse.parseContents(Data(payload.utf8)) else {
-            check("a listing parses", false)
+        guard let tree = try? ExtensionStoreResponse.parseTree(Data(payload.utf8)) else {
+            check("a tree parses", false)
             return
         }
-        check("both entries parse", entries.count == 2)
-        check("a directory is flagged", entries[0].isDirectory)
-        check("a file is not", !entries[1].isDirectory)
-        check("the download URL is read", entries[1].downloadURL == "https://raw.example/package.json")
+        check("every entry parses", tree.tree.count == 4)
+        check("a directory is flagged", tree.tree[0].isDirectory)
+        check("a file is flagged", tree.tree[1].isFile)
+        check("a directory is not a file", !tree.tree[0].isFile)
+        check("an executable blob keeps its mode", tree.tree[2].isExecutable)
+        check("an ordinary blob is not executable", !tree.tree[1].isExecutable)
+        // A recursive listing carries nested paths, which is what makes one call enough.
+        check("nested paths survive", tree.tree[3].path == "src/index.ts")
+        check("a directory is found by name", tree.directorySHA(named: "src") == "t1")
+        check("only directories are named", tree.directoryNames == ["src"])
 
-        // GitHub answers a rate limit or a bad ref with an object where an array was expected.
+        // GitHub answers a rate limit or a bad ref with an object where a tree was expected.
         let rejection = #"{"message":"API rate limit exceeded"}"#
         do {
-            _ = try ExtensionStoreResponse.parseContents(Data(rejection.utf8))
+            _ = try ExtensionStoreResponse.parseTree(Data(rejection.utf8))
             check("a rejection throws", false)
         } catch {
             check(
@@ -165,14 +171,24 @@ struct ExtensionStoreTests {
                 error.localizedDescription.contains("rate limit"))
         }
 
+        // A truncated listing is a prefix; installing from it would silently drop files.
+        let truncated = #"{"tree":[],"truncated":true}"#
+        check(
+            "truncation is reported",
+            (try? ExtensionStoreResponse.parseTree(Data(truncated.utf8)))?.truncated == true)
+
         let url =
-            ExtensionStoreResponse.contentsURL(
-                owner: "raycast", repository: "extensions", path: "extensions/coffee", ref: "abc"
+            ExtensionStoreResponse.treeURL(
+                owner: "raycast", repository: "extensions", sha: "abc", recursive: true
             )?.absoluteString ?? ""
         check(
-            "the contents URL is built",
-            url.hasPrefix("https://api.github.com/repos/raycast/extensions/contents/extensions/coffee"))
-        check("with the ref", url.contains("ref=abc"))
+            "the tree URL is built",
+            url.hasPrefix("https://api.github.com/repos/raycast/extensions/git/trees/abc"))
+        check("recursive is requested", url.contains("recursive=1"))
+        check(
+            "and omitted otherwise",
+            ExtensionStoreResponse.treeURL(owner: "raycast", repository: "extensions", sha: "abc")?
+                .absoluteString.contains("recursive") == false)
     }
 
     static func manifestSummary() {
@@ -233,7 +249,7 @@ struct ExtensionStoreTests {
             "every real manager runs the build script",
             ExtensionPackageManager.allCases.filter { $0 != .automatic }
                 .allSatisfy { $0.buildArguments == ["run", "build"] })
-        // An extension's postinstall is code we never asked to run; the build script is the contract.
+        // An extension's postinstall is code we never asked to run.
         check(
             "installs skip lifecycle scripts",
             ExtensionPackageManager.allCases.filter { $0 != .automatic }

@@ -15,6 +15,7 @@ enum EmojiCategory: String, CaseIterable, Sendable {
     case math = "xm"
     case shapesAndPunctuation = "xs"
     case cjk = "xj"
+    case keysAndTechnical = "xk"
 
     var title: String {
         switch self {
@@ -31,6 +32,7 @@ enum EmojiCategory: String, CaseIterable, Sendable {
         case .math: return "Math"
         case .shapesAndPunctuation: return "Shapes & Punctuation"
         case .cjk: return "CJK Symbols"
+        case .keysAndTechnical: return "Keys & Technical"
         }
     }
 }
@@ -73,7 +75,7 @@ struct EmojiEntry: Identifiable, Hashable, Sendable {
     let name: String
     let category: EmojiCategory
     let supportsSkinTone: Bool
-    let keywords: String  // space-joined search terms; empty for most symbols
+    let keywords: String  // comma-joined search terms; empty for most symbols
 
     var id: String { glyph }
     var displayName: String { name.capitalized }

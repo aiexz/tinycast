@@ -1,7 +1,6 @@
 import Foundation
 
-/// How an app bundle's name is read. Apps ship `CFBundleDisplayName = ""` often enough that a blank
-/// value has to read as absent: the empty name it yields draws as nothing and matches no query.
+/// A blank `CFBundleDisplayName` must read as absent: it draws as nothing and matches nothing.
 enum AppDisplayName {
     /// The Info.plist value as a name, or nil when it is absent, not a string, or blank.
     static func named(_ value: Any?) -> String? {
@@ -12,7 +11,9 @@ enum AppDisplayName {
 
     /// The name a raw Info.plist carries, for callers holding one without a `Bundle` to open.
     static func inInfo(_ info: [String: Any]) -> String? {
-        named(info["CFBundleDisplayName"]) ?? named(info["CFBundleName"])
+        // `CFBundle` reads the `-macos` variant first; Image Playground's loctable ships both.
+        named(info["CFBundleDisplayName-macos"]) ?? named(info["CFBundleDisplayName"])
+            ?? named(info["CFBundleName-macos"]) ?? named(info["CFBundleName"])
     }
 }
 
@@ -22,13 +23,14 @@ extension Bundle {
         infoName("CFBundleDisplayName") ?? infoName("CFBundleName") ?? "Tinycast"
     }
 
-    /// An installed app's name, in Finder's own order, ending at the `.app` filename.
+    /// The name a bundle declares for itself. Not what Finder shows — LaunchServices ignores a
+    /// `CFBundleDisplayName` that disagrees with the file name, so the launcher labels rows by that.
     var installedAppName: String {
         infoName("CFBundleDisplayName") ?? infoName("CFBundleName")
             ?? bundleURL.deletingPathExtension().lastPathComponent
     }
 
-    /// Localized: `object(forInfoDictionaryKey:)` consults `InfoPlist.strings` where the bundle has one.
+    /// Localized: `object(forInfoDictionaryKey:)` consults `InfoPlist.strings`.
     private func infoName(_ key: String) -> String? {
         AppDisplayName.named(object(forInfoDictionaryKey: key))
     }

@@ -10,9 +10,17 @@ import { createContext, runInContext } from "node:vm";
 import { readFileSync, existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
-import { createHash, randomUUID, randomBytes, createHmac } from "node:crypto";
-import { homedir, tmpdir } from "node:os";
+import { execFileSync, spawn } from "node:child_process";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  createHmac,
+  pbkdf2Sync,
+  randomBytes,
+  randomUUID,
+} from "node:crypto";
+import { cpus, freemem, homedir, loadavg, tmpdir, uptime } from "node:os";
 import * as fs from "node:fs";
 import * as zlib from "node:zlib";
 
@@ -24,7 +32,7 @@ const runtimePath = [
 
 const runtime = readFileSync(runtimePath, "utf8");
 
-export function createHarness({ onRender, onFail, verbose = false } = {}) {
+export function createHarness({ onRender, onFail, verbose = false, stubs = {} } = {}) {
   const context = createContext({});
   const timers = new Map();
   const state = { trees: [], failures: [], logs: [], finished: false, hostCalls: [] };
@@ -63,9 +71,11 @@ export function createHarness({ onRender, onFail, verbose = false } = {}) {
       }
     },
     invoke(callId, api, method, argsJson) {
-      state.hostCalls.push(`${api}.${method}`);
+      const name = `${api}.${method}`;
+      state.hostCalls.push(name);
+      const args = JSON.parse(argsJson);
       Promise.resolve()
-        .then(() => stubHostCall(api, method, JSON.parse(argsJson)))
+        .then(() => (stubs[name] ? stubs[name](args) : stubHostCall(api, method, args)))
         .then(
           (value) => settle(callId, true, value),
           (error) => settle(callId, false, String(error?.message ?? error)),
@@ -128,11 +138,44 @@ export function createHarness({ onRender, onFail, verbose = false } = {}) {
 
 function syncHostCall(api, method, args) {
   switch (`${api}.${method}`) {
+    case "os.cpus":
+      return cpus();
+    case "os.freemem":
+      return freemem();
+    case "os.uptime":
+      return uptime();
+    case "os.loadavg":
+      return loadavg();
+    case "fs.open":
+      return fs.openSync(args[0], args[1], args[2]);
+    case "fs.close":
+      fs.closeSync(args[0]);
+      return null;
+    case "fs.read": {
+      const buffer = Buffer.alloc(args[1]);
+      return buffer.subarray(0, fs.readSync(args[0], buffer, 0, buffer.length, args[2])).toString("base64");
+    }
+    case "fs.write": {
+      const buffer = Buffer.from(args[1], "base64");
+      return fs.writeSync(args[0], buffer, 0, buffer.length, args[2]);
+    }
+    case "fs.chmod":
+      fs.chmodSync(args[0], args[1]);
+      return null;
     case "fs.readFile":
       return fs.readFileSync(args[0]).toString("base64");
     case "fs.writeFile":
       fs[args[2] ? "appendFileSync" : "writeFileSync"](args[0], Buffer.from(args[1], "base64"));
       return null;
+    case "fs.readRange": {
+      const handle = fs.openSync(args[0], "r");
+      try {
+        const buffer = Buffer.alloc(args[2]);
+        return buffer.subarray(0, fs.readSync(handle, buffer, 0, args[2], args[1])).toString("base64");
+      } finally {
+        fs.closeSync(handle);
+      }
+    }
     case "fs.exists":
       return fs.existsSync(args[0]);
     case "fs.stat": {
@@ -182,6 +225,46 @@ function syncHostCall(api, method, args) {
       return createHmac(args[0], Buffer.from(args[2], "base64"))
         .update(Buffer.from(args[1], "base64"))
         .digest("base64");
+    case "crypto.pbkdf2":
+      return pbkdf2Sync(Buffer.from(args[1], "base64"), Buffer.from(args[2], "base64"), args[3], args[4], args[0])
+        .toString("base64");
+    case "crypto.cipher": {
+      const [mode, decrypt, key, iv, data, padding] = args;
+      const algorithm = `aes-${Buffer.from(key, "base64").length * 8}-${mode}`;
+      const create = decrypt ? createDecipheriv : createCipheriv;
+      const cipher = create(algorithm, Buffer.from(key, "base64"), mode === "ecb" ? null : Buffer.from(iv, "base64"));
+      cipher.setAutoPadding(padding);
+      return Buffer.concat([cipher.update(Buffer.from(data, "base64")), cipher.final()]).toString("base64");
+    }
+    case "proc.start": {
+      const spec = args[0];
+      const child = spec.shell
+        ? spawn("/bin/sh", ["-c", spec.command], { cwd: spec.cwd, stdio: spec.detached ? "ignore" : "pipe" })
+        : spawn(spec.command, spec.args, { cwd: spec.cwd, stdio: spec.detached ? "ignore" : "pipe" });
+      child.on("error", () => {});
+      if (child.pid === undefined) throw Object.assign(new Error(`ENOENT: spawn '${spec.command}'`), { code: "ENOENT" });
+      if (spec.detached) return child.pid;
+      if (spec.input) child.stdin.end(Buffer.from(spec.input, "base64"));
+      const stdout = [];
+      const stderr = [];
+      child.stdout.on("data", (chunk) => stdout.push(chunk));
+      child.stderr.on("data", (chunk) => stderr.push(chunk));
+      const exit = new Promise((done) =>
+        child.on("close", (status, signal) =>
+          done({
+            stdout: Buffer.concat(stdout).toString("base64"),
+            stderr: Buffer.concat(stderr).toString("base64"),
+            status: status ?? 1,
+            signal,
+          }),
+        ),
+      );
+      runningChildren.set(child.pid, exit);
+      return child.pid;
+    }
+    case "proc.kill":
+      process.kill(args[0], args[1]);
+      return null;
     case "proc.run": {
       const spec = args[0];
       try {
@@ -215,6 +298,7 @@ function syncHostCall(api, method, args) {
 }
 
 const oauthTokens = new Map();
+const runningChildren = new Map();
 
 async function stubHostCall(api, method, args) {
   switch (`${api}.${method}`) {
@@ -246,8 +330,11 @@ async function stubHostCall(api, method, args) {
         bodyBase64: body.toString("base64"),
       };
     }
-    case "proc.run":
-      return syncHostCall(api, method, args);
+    case "proc.wait": {
+      const exit = runningChildren.get(args[0]);
+      runningChildren.delete(args[0]);
+      return exit;
+    }
     // Positional arguments throughout, matching `src/api/oauth.js`.
     case "oauth.authorize":
       return { authorizationCode: "auth-code-12345", state: args[1] ?? "" };
@@ -274,7 +361,6 @@ export function bootConfig(overrides = {}) {
       homedir: homedir(),
       tmpdir: tmpdir(),
       username: "tester",
-      cpus: 8,
     },
     environment: {
       extensionName: "fixture",

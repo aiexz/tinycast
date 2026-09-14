@@ -1,36 +1,36 @@
 import SwiftUI
 
-/// A fenced code block. Lines soft-wrap rather than scroll: a second scroll view inside the
-/// transcript would fight the palette's own dissolve and thin scrollbar.
+/// Lines soft-wrap: a second scroll view would fight the transcript's own dissolve.
 struct MarkdownCodeView: View {
+    @Environment(\.metrics) private var metrics
     let language: String?
     let text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            HStack(spacing: Theme.Spacing.md) {
+        VStack(alignment: .leading, spacing: metrics.spacing.sm) {
+            HStack(spacing: metrics.spacing.md) {
                 if let language {
                     Text(language)
-                        .font(Theme.Typography.keyCap)
+                        .font(metrics.typography.keyCap)
                         .foregroundStyle(Theme.Colors.textTertiary)
                 }
                 Spacer(minLength: 0)
                 ChatCopyButton(text: text, subject: "Code")
             }
             Text(text)
-                .font(Theme.Typography.code)
+                .font(metrics.typography.code)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, Theme.Spacing.xl)
-        .padding(.vertical, Theme.Spacing.lg)
+        .padding(.horizontal, metrics.spacing.xl)
+        .padding(.vertical, metrics.spacing.lg)
         .background(
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+            RoundedRectangle(cornerRadius: metrics.radius.card, style: .continuous)
                 .fill(Theme.Colors.cardFill)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.card, style: .continuous)
+            RoundedRectangle(cornerRadius: metrics.radius.card, style: .continuous)
                 .stroke(Theme.Colors.cardStroke))
     }
 }

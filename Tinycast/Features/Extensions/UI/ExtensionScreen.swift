@@ -3,18 +3,21 @@ import SwiftUI
 
 /// The one source of row order, so the palette's flat `selection` maps 1:1 onto visible rows.
 struct ExtensionScreen: Equatable {
+    struct SelectionChange: Equatable {
+        let handler: String
+        let itemID: String?
+    }
+
     enum Kind: Equatable {
         case list
-        case grid(columns: Int)
+        case grid(ExtensionGridLayout)
         case detail
         case form
         /// A root component Tinycast doesn't render (`MenuBarExtra`), or nothing rendered yet.
         case unsupported(String)
     }
 
-    /// One selectable row. `index` is the flat `selection` index, and `id` is what a `LazyVStack` or
-    /// `LazyVGrid` registers as its scroll target — an `.id()` applied inside a row only exists once
-    /// the row has been realized, which is exactly when scrolling to it isn't needed.
+    /// `id` is the scroll target: an `.id()` inside a row exists only once it is realized.
     struct Item: Equatable, Identifiable {
         let node: RenderNode
         let index: Int
@@ -48,6 +51,7 @@ struct ExtensionScreen: Equatable {
     let filtersLocally: Bool
     let searchTextHandler: String?
     let selectionHandler: String?
+    let selectedItemID: String?
     let searchBarAccessory: RenderNode?
     /// The `List`-level `isShowingDetail`; when set, rows get a detail pane beside them.
     let showsDetail: Bool
@@ -75,8 +79,8 @@ struct ExtensionScreen: Equatable {
     static let empty = ExtensionScreen(
         kind: .unsupported(""), root: nil, rows: [], items: [], fields: [], isLoading: false,
         navigationTitle: nil, searchPlaceholder: nil, filtersLocally: false, searchTextHandler: nil,
-        selectionHandler: nil, searchBarAccessory: nil, showsDetail: false, screenActions: nil,
-        emptyView: nil)
+        selectionHandler: nil, selectedItemID: nil, searchBarAccessory: nil, showsDetail: false,
+        screenActions: nil, emptyView: nil)
 
     /// Filters rows by `query` only when the extension hasn't taken the search text over.
     init(tree: RenderTree, query: String) {
@@ -90,16 +94,18 @@ struct ExtensionScreen: Equatable {
         searchPlaceholder = root.string("searchBarPlaceholder")
         searchTextHandler = root.handler("onSearchTextChange")
         selectionHandler = root.handler("onSelectionChange")
+        selectedItemID = root.string("selectedItemId")
         searchBarAccessory = root.node("searchBarAccessory")
         showsDetail = root.bool("isShowingDetail") ?? false
         screenActions = root.node("actions")
-        filtersLocally = root.bool("filtering") ?? (searchTextHandler == nil)
+        filtersLocally =
+            root.bool("filtering") ?? (root.object("filtering") != nil || searchTextHandler == nil)
 
         switch root.type {
         case "List":
             kind = .list
         case "Grid":
-            kind = .grid(columns: ExtensionScreen.gridColumns(root))
+            kind = .grid(ExtensionGridLayout(root))
         case "Detail":
             kind = .detail
         case "Form":
@@ -118,8 +124,7 @@ struct ExtensionScreen: Equatable {
                 filtersLocally ? query.trimmingCharacters(in: .whitespaces) : "")
             var rows: [Row] = []
             var items: [Item] = []
-            // Numbering as the rows are built is what keeps `selection` and the drawn order in step;
-            // a row that has to search `items` for its own place can only get that wrong.
+            // Numbering as rows are built keeps `selection` and the drawn order in step.
             func append(_ node: RenderNode) {
                 let item = Item(node: node, index: items.count)
                 items.append(item)
@@ -147,7 +152,12 @@ struct ExtensionScreen: Equatable {
         case .form:
             fields = root.children.filter { $0.type.hasPrefix("Form.") }
             rows = []
-            items = []
+            // A form's focusable fields are its selectable rows, so ↑/↓ and ⇥ walk one order.
+            var fieldItems: [Item] = []
+            for field in fields where ExtensionFormField(type: field.type).isFocusable {
+                fieldItems.append(Item(node: field, index: fieldItems.count))
+            }
+            items = fieldItems
             emptyView = nil
 
         case .detail, .unsupported:
@@ -161,8 +171,9 @@ struct ExtensionScreen: Equatable {
     private init(
         kind: Kind, root: RenderNode?, rows: [Row], items: [Item], fields: [RenderNode],
         isLoading: Bool, navigationTitle: String?, searchPlaceholder: String?, filtersLocally: Bool,
-        searchTextHandler: String?, selectionHandler: String?, searchBarAccessory: RenderNode?,
-        showsDetail: Bool, screenActions: RenderNode?, emptyView: RenderNode?
+        searchTextHandler: String?, selectionHandler: String?, selectedItemID: String?,
+        searchBarAccessory: RenderNode?, showsDetail: Bool, screenActions: RenderNode?,
+        emptyView: RenderNode?
     ) {
         self.kind = kind
         self.root = root
@@ -175,30 +186,32 @@ struct ExtensionScreen: Equatable {
         self.filtersLocally = filtersLocally
         self.searchTextHandler = searchTextHandler
         self.selectionHandler = selectionHandler
+        self.selectedItemID = selectedItemID
         self.searchBarAccessory = searchBarAccessory
         self.showsDetail = showsDetail
         self.screenActions = screenActions
         self.emptyView = emptyView
     }
 
-    /// Local filtering mirrors Raycast: title, subtitle and keywords, ranked by the launcher's matcher
-    /// so an extension list feels like the rest of the palette.
+    var selectedItemIndex: Int? {
+        guard let selectedItemID else { return nil }
+        return items.firstIndex { $0.node.string("id") == selectedItemID }
+    }
+
+    /// Resolves the List/Grid callback after local filtering changes the visible row order.
+    func selectionChange(at index: Int) -> SelectionChange? {
+        guard let selectionHandler else { return nil }
+        let itemID = items.indices.contains(index) ? items[index].node.string("id") : nil
+        return SelectionChange(handler: selectionHandler, itemID: itemID)
+    }
+
+    /// Title, subtitle and keywords, ranked by the launcher's matcher.
     static func matches(_ item: RenderNode, _ needle: FuzzyMatch.Query) -> Bool {
         guard !needle.isEmpty else { return true }
         var haystack = [item.string("title") ?? ""]
         if let subtitle = item.string("subtitle") { haystack.append(subtitle) }
         haystack.append(contentsOf: item.array("keywords").compactMap(\.stringValue))
         return haystack.contains { FuzzyMatch.score(needle, candidate: $0) != nil }
-    }
-
-    private static func gridColumns(_ root: RenderNode) -> Int {
-        if let columns = root.double("columns").map({ Int($0) }), columns > 0 { return columns }
-        // Raycast's default is 5; `itemSize` is the legacy way of saying the same thing.
-        switch root.string("itemSize") {
-        case "small": return 8
-        case "large": return 3
-        default: return 5
-        }
     }
 
     /// The `ActionPanel` that applies to the current selection: the item's own, else the screen's.
@@ -209,26 +222,39 @@ struct ExtensionScreen: Equatable {
         return screenActions
     }
 
-    /// Flatten an `ActionPanel` into the actions the palette offers, sections included. Submenus are
-    /// flattened one level with their title prefixed — the palette's menu is single-level.
+    /// Where a drawn field sits in the focus order, or nil for one that is never landed on.
+    func focusItem(for field: RenderNode) -> Item? {
+        items.first { $0.node.id == field.id }
+    }
+
+    /// The field a form opens on: the one that asked for it, else the first one there is.
+    var autoFocusedField: Int {
+        items.first { $0.node.bool("autoFocus") == true }?.index ?? 0
+    }
+
+    /// Submenus flatten into their section: the palette's menu is flat.
     static func actions(in panel: RenderNode?) -> [ExtensionAction] {
         guard let panel else { return [] }
         var result: [ExtensionAction] = []
-        func walk(_ node: RenderNode, sectionTitle: String?) {
+        // By node, not title: untitled sections are the common case and must still separate.
+        var previousSection: RenderNode.ID?
+        func walk(_ node: RenderNode, section: RenderNode.ID?) {
             for child in node.children {
                 switch child.type {
                 case "Action":
-                    result.append(ExtensionAction(node: child, section: sectionTitle))
+                    let startsSection = !result.isEmpty && section != previousSection
+                    result.append(ExtensionAction(node: child, startsSection: startsSection))
+                    previousSection = section
                 case "ActionPanel.Section":
-                    walk(child, sectionTitle: child.string("title"))
+                    walk(child, section: child.id)
                 case "ActionPanel.Submenu":
-                    walk(child, sectionTitle: child.string("title") ?? sectionTitle)
+                    walk(child, section: section)
                 default:
                     break
                 }
             }
         }
-        walk(panel, sectionTitle: nil)
+        walk(panel, section: nil)
         return result
     }
 }
@@ -236,7 +262,8 @@ struct ExtensionScreen: Equatable {
 /// One activatable action from an `ActionPanel`.
 struct ExtensionAction: Equatable, Identifiable {
     let node: RenderNode
-    let section: String?
+    /// True for the first action after a section boundary, so the menu draws a separator above it.
+    let startsSection: Bool
 
     var id: Int { node.id }
     var title: String { node.string("title") ?? "Action" }
@@ -264,8 +291,7 @@ struct ExtensionAction: Equatable, Identifiable {
         return caps
     }
 
-    /// Does a keystroke match this action's declared shortcut? Modifiers must match exactly, so ⌘⇧C
-    /// never fires a plain ⌘C action.
+    /// Modifiers must match exactly, so ⌘⇧C never fires a plain ⌘C action.
     func matches(key: KeyEquivalent, modifiers: EventModifiers) -> Bool {
         guard let shortcut = node.object("shortcut") else { return false }
         let resolved = shortcut["macOS"]?.objectValue ?? shortcut

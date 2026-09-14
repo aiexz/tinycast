@@ -40,13 +40,12 @@ struct ExtensionCommandView: View {
                     isLoading: screen.isLoading, assetsPath: assetsPath)
             case .form:
                 ExtensionFormView(
-                    screen: screen, assetsPath: assetsPath, onChange: onFieldChange,
+                    screen: screen, assetsPath: assetsPath, selection: selection, scroll: scroll,
+                    onSelect: onSelect, onChange: onFieldChange,
                     onSubmit: { onActivate(selection) })
             case .unsupported(let type):
                 if type.isEmpty {
-                    // A commit arrived but the command rendered nothing — it returned null, usually
-                    // because it has no data to show. Saying "Starting…" here would claim it is still
-                    // launching, which is how a permanently-null command looked like a hang.
+                    // A commit rendered null; "Starting…" here would look like a hang.
                     EmptyResults(text: "Nothing to show")
                 } else {
                     ExtensionFailureView(
@@ -59,9 +58,9 @@ struct ExtensionCommandView: View {
     }
 }
 
-/// A command that threw, or one Tinycast can't render. The stack trace is kept — it's the only debugging
-/// signal an extension author gets.
+/// The stack trace is kept: it is the only debugging signal an author gets.
 struct ExtensionFailureView: View {
+    @Environment(\.metrics) private var metrics
     let message: String
 
     private var headline: String {
@@ -74,12 +73,12 @@ struct ExtensionFailureView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-                HStack(spacing: Theme.Spacing.sm) {
+            VStack(alignment: .leading, spacing: metrics.spacing.md) {
+                HStack(spacing: metrics.spacing.sm) {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                     Text(headline)
-                        .font(Theme.Typography.rowTitle)
+                        .font(metrics.typography.rowTitle)
                         .textSelection(.enabled)
                 }
                 if let detail {
@@ -90,32 +89,34 @@ struct ExtensionFailureView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.Spacing.lg)
+            .padding(metrics.spacing.lg)
             .hideNativeScrollers()
         }
         .thinScrollbar()
     }
 }
 
-/// Toasts a running view command raised, stacked above the footer. `showHUD` is a separate floating
-/// window (`HUDWindowController`) because a no-view command closes the palette before it finishes.
+/// `showHUD` is a separate window: a no-view command closes the palette first.
 struct ExtensionFeedbackOverlay: View {
+    @Environment(\.metrics) private var metrics
     let toasts: [ExtensionToast]
     let onToastAction: (String) -> Void
 
     var body: some View {
-        VStack(spacing: Theme.Spacing.xs) {
+        VStack(spacing: metrics.spacing.xs) {
             ForEach(toasts) { toast in
                 ToastRow(toast: toast, onAction: onToastAction)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .padding(.bottom, Theme.Size.bottomBarHeight)
-        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.bottom, metrics.size.bottomBarHeight)
+        .padding(.horizontal, metrics.spacing.md)
         .animation(.easeOut(duration: 0.16), value: toasts.map(\.id))
     }
 
     private struct ToastRow: View {
+
+        @Environment(\.metrics) private var metrics
         let toast: ExtensionToast
         let onAction: (String) -> Void
 
@@ -128,30 +129,30 @@ struct ExtensionFeedbackOverlay: View {
         }
 
         var body: some View {
-            HStack(spacing: Theme.Spacing.sm) {
+            HStack(spacing: metrics.spacing.sm) {
                 Image(systemName: icon.name)
                     .foregroundStyle(icon.tint)
                     .symbolEffect(.rotate, isActive: toast.style == .animated)
                 VStack(alignment: .leading, spacing: 0) {
-                    Text(toast.title).font(Theme.Typography.bar).lineLimit(1)
+                    Text(toast.title).font(metrics.typography.bar).lineLimit(1)
                     if let message = toast.message, !message.isEmpty {
                         Text(message)
-                            .font(Theme.Typography.rowTrailing)
+                            .font(metrics.typography.rowTrailing)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
                     }
                 }
-                Spacer(minLength: Theme.Spacing.sm)
+                Spacer(minLength: metrics.spacing.sm)
                 if let action = toast.primaryAction {
                     Button(action.title) { onAction(action.token) }
                         .buttonStyle(.plain)
-                        .font(Theme.Typography.bar)
+                        .font(metrics.typography.bar)
                         .foregroundStyle(.tint)
                 }
             }
-            .padding(.horizontal, Theme.Spacing.md)
-            .padding(.vertical, Theme.Spacing.sm)
-            .frosted(in: RoundedRectangle(cornerRadius: Theme.Radius.menu, style: .continuous))
+            .padding(.horizontal, metrics.spacing.md)
+            .padding(.vertical, metrics.spacing.sm)
+            .frosted(in: RoundedRectangle(cornerRadius: metrics.radius.menu, style: .continuous))
         }
     }
 }
@@ -161,13 +162,14 @@ struct ExtensionFeedbackOverlay: View {
 enum ExtensionActionsMenu {
     /// What the panel belongs to: the selected row, or the screen when the selection has outrun it.
     static func header(screen: ExtensionScreen, selection: Int) -> String? {
-        screen.items.indices.contains(selection)
-            ? screen.items[selection].node.string("title") : screen.navigationTitle
+        // A form's rows are its fields, and the panel acts on the form rather than on one field.
+        guard screen.kind != .form, screen.items.indices.contains(selection) else {
+            return screen.navigationTitle
+        }
+        return screen.items[selection].node.string("title")
     }
 
-    /// Rows carry a resolved `ExtensionImage` rather than a symbol name: an `Action`'s icon is an
-    /// `ImageLike`, so it can name any source and tint it, which `PopoverMenuItem` cannot express.
-    /// Called from the render path alone — resolving an icon per ↑/↓ would probe SF Symbols on main.
+    /// Rows carry a resolved `ExtensionImage`; resolving per ↑/↓ would probe symbols on main.
     static func rows(_ actions: [ExtensionAction], assetsPath: String?) -> [ExtensionActionItem] {
         actions.map { action in
             ExtensionActionItem(
@@ -178,7 +180,8 @@ enum ExtensionActionsMenu {
                     isDark: NSApp.effectiveAppearance.isDark,
                     isDestructive: action.isDestructive),
                 shortcut: action.shortcutCaps?.joined(),
-                isDestructive: action.isDestructive)
+                isDestructive: action.isDestructive,
+                startsSection: action.startsSection)
         }
     }
 }

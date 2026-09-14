@@ -1,9 +1,6 @@
 import Foundation
 
-/// The Stop path over the app-server. `CodexTurnRunner` learns a turn's ID twice — from the
-/// `turn/started` notification and from the `turn/start` response — and either can be arbitrarily
-/// late, so Stop can land while the turn the server is already running has no name here yet. These
-/// cases drive the real client against a stub server stalled in exactly that window.
+/// A turn's ID arrives twice and either can be late, so Stop can beat both.
 @main
 @MainActor
 struct CodexTurnTests {
@@ -27,9 +24,7 @@ struct CodexTurnTests {
         if failures > 0 { exit(1) }
     }
 
-    /// The regression: Stop arrives before anything has named the turn, and the `turn/start`
-    /// response never comes. `turn/started` is then the only thing that can name it, so a runner
-    /// that stops listening to the thread it just dropped leaves the turn running on the server.
+    /// Stop arrives before anything names the turn, and `turn/start` never answers.
     static func stopBeforeTurnStartedStillInterrupts() async {
         guard let server = StubServer(mode: "hold-turn") else {
             expect(false, "the stub app-server installs")
@@ -37,11 +32,17 @@ struct CodexTurnTests {
         }
         defer { server.tearDown() }
 
-        let turn = server.startTurn()
+        let turn = server.startTurn(effort: "high")
         guard await server.awaitMark("turn-start-received") else {
             expect(false, "the stub app-server is asked to start a turn")
             return
         }
+        expect(
+            server.received.contains(#""effort":"high""#),
+            "reasoning effort belongs to the turn and does not mutate Codex settings")
+        expect(
+            !server.received.contains("config/value/write"),
+            "a Tinycast turn never writes the user's Codex configuration")
 
         turn.cancel()
         let dropped = await server.awaitCondition { !server.runner.isActive }
@@ -79,9 +80,7 @@ struct CodexTurnTests {
     }
 }
 
-/// A `CodexTurnRunner` wired to a real `CodexAppServerClient`, wired in turn to the stub server in
-/// `Tests/ai-fixtures/codex-stub.py`. The wiring is the manager's own: `connect` starts the process,
-/// and every notification the client does not claim goes to the runner.
+/// A real client against the stub server in `Tests/ai-fixtures/codex-stub.js`.
 @MainActor
 final class StubServer {
     let root: URL
@@ -96,7 +95,7 @@ final class StubServer {
             try FileManager.default.createDirectory(
                 at: executable.deletingLastPathComponent(), withIntermediateDirectories: true)
             try FileManager.default.copyItem(
-                at: URL(fileURLWithPath: "Tests/ai-fixtures/codex-stub.py"), to: executable)
+                at: URL(fileURLWithPath: "Tests/ai-fixtures/codex-stub.js"), to: executable)
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o755], ofItemAtPath: executable.path)
         } catch {
@@ -104,8 +103,7 @@ final class StubServer {
             return nil
         }
 
-        // `CodexExecutableLocator` walks PATH out of the current environment, so the stub only has
-        // to sit in front of any real `codex` this machine has.
+        // The locator walks PATH, so the stub only sits in front of any real `codex`.
         let inherited = ProcessInfo.processInfo.environment["PATH"] ?? ""
         setenv("PATH", "\(executable.deletingLastPathComponent().path):\(inherited)", 1)
         setenv("TC_STUB_ROOT", root.path, 1)
@@ -129,10 +127,10 @@ final class StubServer {
     }
 
     /// What the app does: a task iterating the provider stream, where Stop is its cancellation.
-    func startTurn() -> Task<Void, Never> {
+    func startTurn(effort: String? = nil) -> Task<Void, Never> {
         let stream = runner.stream(
             AIRequest(messages: [AIMessage(role: .user, text: "Hello")]),
-            model: "gpt-5-codex", effort: nil)
+            model: "gpt-5-codex", effort: effort)
         return Task {
             do {
                 for try await _ in stream {}
@@ -162,8 +160,7 @@ final class StubServer {
         await awaitCondition { self.received.contains(line) }
     }
 
-    /// Polls instead of sleeping a fixed span, so a passing case costs what it actually needs and
-    /// a failing one still ends.
+    /// Polls rather than sleeping, so a pass costs what it needs and a failure still ends.
     func awaitCondition(
         timeout: Duration = .seconds(10), _ condition: @MainActor () -> Bool
     ) async -> Bool {

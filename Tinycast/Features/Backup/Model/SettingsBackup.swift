@@ -2,11 +2,12 @@ import Foundation
 
 /// A readable configuration snapshot; every field is optional, so an import merges.
 struct SettingsBackup: Codable {
-    var version = 4
+
     var settings: SettingsData?
     var hotkeys: HotkeyBackup?
     var customCommands: [CustomCommand]?
     var quicklinks: [Quicklink]?
+    var windowLayouts: [WindowLayout]?
     var favoriteApps: [String]?
     var hiddenLauncherItems: [String]?
     var hiddenLauncherKinds: [String]?
@@ -15,7 +16,10 @@ struct SettingsBackup: Codable {
     /// Enums store by raw value, so an unknown one is ignored rather than failing.
     struct SettingsData: Codable {
         // Adding a field here means adding it to SettingsBackupCoverage too, or the harness fails.
+        // Carried, unlike the consent flags: recording your own copies grants no permission class.
+        var clipboardEnabled: Bool?
         var clipboardRetentionDays: Int?
+        var clipboardDefaultAction: String?
         var clipboardDisabledApps: [String]?
         var launchAtLogin: Bool?
         var hyperKey: String?
@@ -24,7 +28,10 @@ struct SettingsBackup: Codable {
         var emojiSkinTone: String?
         var showInMenuBar: Bool?
         var popToRootSeconds: Int?
+        var escapeKeyBehavior: String?
         var appearance: String?
+        var interfaceSize: String?
+        var paletteTransparency: Int?
         var compactMode: Bool?
         var showFavoritesInCompactMode: Bool?
         var showRecommendedApps: Bool?
@@ -41,10 +48,14 @@ struct SettingsBackup: Codable {
         var customCommandsShowInLauncher: Bool?
         var snippetsShowInLauncher: Bool?
         // Safe to carry: it grants no permission class paste doesn't already prompt for.
+        var navigationEnabled: Bool?
+        var menuSearchDisabledApps: [String]?
+        var menuSearchShowsAppleMenu: Bool?
         var windowManagementEnabled: Bool?
         var windowManagementShowInLauncher: Bool?
         var windowGap: Int?
-        var windowCycleOnRepeat: Bool?
+        var windowCycle: String?
+        var windowLayoutsShowInLauncher: Bool?
         // Carried, unlike `snippetsEnabled`: opening a link grants no permission class of its own.
         var quicklinksEnabled: Bool?
         var quicklinksShowInLauncher: Bool?
@@ -54,34 +65,32 @@ struct SettingsBackup: Codable {
         var quicklinkConfirmsBeforeDelete: Bool?
         // `calendarEnabled` is absent: an import must not grant calendar access.
         var calendarShowInLauncher: Bool?
+        var calendarLauncherLimit: Int?
+        // Carried: it narrows what is read rather than widening what may be reached.
+        var calendarIncludesTomorrow: Bool?
         var joinWindowMinutes: Int?
         // `autoJoinMeetings` and `cameraPreview` are absent: an import must arm neither.
         var autoJoinConfirms: Bool?
         var menuBarEvents: Int?
+        var calendarMenuBarDisplay: Int?
         var menuBarLinkedEventsOnly: Bool?
         var hideCurrentEvent: Int?
         // Safe to carry: it silences a prompt rather than granting anything.
         var supportReminders: Bool?
     }
 
-    /// Combos keep the legacy shape, so older files import. docs/features/hotkeys.md#persistence
+    /// One entry per bindable action. docs/features/hotkeys.md#persistence
     struct HotkeyBackup: Codable {
+        /// Named apart from `commands`: the launcher toggle is the one action with no command row.
         var togglePalette: HotKeyBinding?
-        var toggleClipboard: HotKeyBinding?
-        var toggleEmoji: HotKeyBinding?
-        var showNotes: HotKeyBinding?
-        var createNote: HotKeyBinding?
-        var searchNotes: HotKeyBinding?
-        var searchFiles: HotKeyBinding?
-        var joinNextMeeting: HotKeyBinding?
-        var mySchedule: HotKeyBinding?
-        var createEvent: HotKeyBinding?
+        var commands: [String: HotKeyBinding]?
         var apps: [String: HotKeyBinding]?
         var panes: [String: HotKeyBinding]?
         var customCommands: [String: HotKeyBinding]?
         var systemActions: [String: HotKeyBinding]?
         var windowCommands: [String: HotKeyBinding]?
         var quicklinks: [String: HotKeyBinding]?
+        var windowLayouts: [String: HotKeyBinding]?
     }
 
     /// A tally of what an import touched, for user-facing confirmation.
@@ -93,6 +102,7 @@ struct SettingsBackup: Codable {
         var aliases = 0
         var customCommands = 0
         var quicklinks = 0
+        var windowLayouts = 0
     }
 }
 
@@ -104,7 +114,9 @@ extension SettingsBackup {
         let s = core.settings
         var backup = SettingsBackup()
         backup.settings = SettingsData(
+            clipboardEnabled: s.clipboardEnabled,
             clipboardRetentionDays: s.clipboardRetention.rawValue,
+            clipboardDefaultAction: s.clipboardDefaultAction.rawValue,
             clipboardDisabledApps: s.clipboardDisabledApps,
             launchAtLogin: s.launchAtLogin,
             hyperKey: s.hyperKey.rawValue,
@@ -114,7 +126,10 @@ extension SettingsBackup {
             showInMenuBar: UserDefaults.standard.object(forKey: SettingsKey.showInMenuBar) as? Bool
                 ?? true,
             popToRootSeconds: s.popToRootTimeout.rawValue,
+            escapeKeyBehavior: s.escapeKeyBehavior.rawValue,
             appearance: s.appearance.rawValue,
+            interfaceSize: s.interfaceSize.rawValue,
+            paletteTransparency: s.paletteTransparency,
             compactMode: s.compactMode,
             showFavoritesInCompactMode: s.showFavoritesInCompactMode,
             showRecommendedApps: s.showRecommendedApps,
@@ -128,10 +143,14 @@ extension SettingsBackup {
             customCommandsEnabled: s.customCommandsEnabled,
             customCommandsShowInLauncher: s.customCommandsShowInLauncher,
             snippetsShowInLauncher: s.snippetsShowInLauncher,
+            navigationEnabled: s.navigationEnabled,
+            menuSearchDisabledApps: s.menuSearchDisabledApps,
+            menuSearchShowsAppleMenu: s.menuSearchShowsAppleMenu,
             windowManagementEnabled: s.windowManagementEnabled,
             windowManagementShowInLauncher: s.windowManagementShowInLauncher,
             windowGap: s.windowGap,
-            windowCycleOnRepeat: s.windowCycleOnRepeat,
+            windowCycle: s.windowCycle.rawValue,
+            windowLayoutsShowInLauncher: s.windowLayoutsShowInLauncher,
             quicklinksEnabled: s.quicklinksEnabled,
             quicklinksShowInLauncher: s.quicklinksShowInLauncher,
             extensionsShowInLauncher: s.extensionsShowInLauncher,
@@ -139,9 +158,12 @@ extension SettingsBackup {
             quicklinkSelectionFallback: s.quicklinkSelectionFallback.rawValue,
             quicklinkConfirmsBeforeDelete: s.quicklinkConfirmsBeforeDelete,
             calendarShowInLauncher: s.calendarShowInLauncher,
+            calendarLauncherLimit: s.calendarLauncherLimit.rawValue,
+            calendarIncludesTomorrow: s.calendarIncludesTomorrow,
             joinWindowMinutes: s.joinWindowMinutes.rawValue,
             autoJoinConfirms: s.autoJoinConfirms,
             menuBarEvents: s.menuBarEvents.rawValue,
+            calendarMenuBarDisplay: s.calendarMenuBarDisplay.rawValue,
             menuBarLinkedEventsOnly: s.menuBarLinkedEventsOnly,
             hideCurrentEvent: s.hideCurrentEvent.rawValue,
             supportReminders: s.supportRemindersEnabled)
@@ -149,15 +171,10 @@ extension SettingsBackup {
         let hk = core.hotKeys
         var hotkeys = HotkeyBackup()
         hotkeys.togglePalette = hk.binding(for: .togglePalette)
-        hotkeys.toggleClipboard = hk.binding(for: .toggleClipboard)
-        hotkeys.toggleEmoji = hk.binding(for: .toggleEmoji)
-        hotkeys.showNotes = hk.binding(for: .showNotes)
-        hotkeys.createNote = hk.binding(for: .createNote)
-        hotkeys.searchNotes = hk.binding(for: .searchNotes)
-        hotkeys.searchFiles = hk.binding(for: .searchFiles)
-        hotkeys.joinNextMeeting = hk.binding(for: .joinNextMeeting)
-        hotkeys.mySchedule = hk.binding(for: .mySchedule)
-        hotkeys.createEvent = hk.binding(for: .createEvent)
+        hotkeys.commands = Dictionary(
+            uniqueKeysWithValues: CommandID.allCases.compactMap { id in
+                id.hotKeyAction.flatMap(hk.binding(for:)).map { (id.rawValue, $0) }
+            })
         hotkeys.apps = Dictionary(
             uniqueKeysWithValues: hk.boundBundleIDs.compactMap { id in
                 hk.binding(for: .app(bundleID: id)).map { (id, $0) }
@@ -182,10 +199,15 @@ extension SettingsBackup {
             uniqueKeysWithValues: hk.boundQuicklinkIDs.compactMap { id in
                 hk.binding(for: .quicklink(id: id)).map { (id.uuidString.lowercased(), $0) }
             })
+        hotkeys.windowLayouts = Dictionary(
+            uniqueKeysWithValues: hk.boundWindowLayoutIDs.compactMap { id in
+                hk.binding(for: .windowLayout(id: id)).map { (id.uuidString.lowercased(), $0) }
+            })
         backup.hotkeys = hotkeys
 
         backup.customCommands = core.customCommands.commands
         backup.quicklinks = core.quicklinks.quicklinks
+        backup.windowLayouts = core.windowLayouts.layouts
         backup.favoriteApps = core.favorites.keys
         backup.hiddenLauncherItems = Array(core.visibility.hiddenItemKeys)
         backup.hiddenLauncherKinds = Array(core.visibility.disabledKinds)
@@ -203,6 +225,11 @@ extension SettingsBackup {
         // Before the hotkeys, so a restored binding has its quicklink to attach to.
         if let quicklinks {
             summary.quicklinks = core.quicklinkCoordinator.replaceQuicklinks(quicklinks)
+        }
+        // Before the hotkeys too, for the same reason: a binding needs its layout to attach to.
+        if let windowLayouts {
+            summary.windowLayouts =
+                core.windowLayoutCoordinator.replaceWindowLayouts(windowLayouts)
         }
         if let hotkeys { summary.hotkeys = applyHotkeys(hotkeys, to: core) }
         if let favoriteApps {
@@ -226,6 +253,10 @@ extension SettingsBackup {
     private func applySettings(_ s: SettingsData, to core: AppCore) -> Int {
         let settings = core.settings
         var count = 0
+        if let flag = s.clipboardEnabled {
+            settings.clipboardEnabled = flag
+            count += 1
+        }
         if let days = s.clipboardRetentionDays, let retention = ClipboardRetention(rawValue: days) {
             settings.clipboardRetention = retention
             core.clipboardCoordinator.applyRetention(retention)
@@ -233,6 +264,10 @@ extension SettingsBackup {
         }
         if let apps = s.clipboardDisabledApps {
             settings.clipboardDisabledApps = apps
+            count += 1
+        }
+        if let raw = s.clipboardDefaultAction, let action = ClipboardDefaultAction(rawValue: raw) {
+            settings.clipboardDefaultAction = action
             count += 1
         }
         if let launch = s.launchAtLogin {
@@ -263,8 +298,20 @@ extension SettingsBackup {
             settings.popToRootTimeout = timeout
             count += 1
         }
+        if let raw = s.escapeKeyBehavior, let behavior = EscapeKeyBehavior(rawValue: raw) {
+            settings.escapeKeyBehavior = behavior
+            count += 1
+        }
+        if let raw = s.interfaceSize, let size = InterfaceSize(rawValue: raw) {
+            settings.interfaceSize = size
+            count += 1
+        }
         if let raw = s.appearance, let appearance = AppAppearance(rawValue: raw) {
             settings.appearance = appearance
+            count += 1
+        }
+        if let value = s.paletteTransparency, (-100...100).contains(value) {
+            settings.paletteTransparency = value
             count += 1
         }
         if let flag = s.compactMode {
@@ -320,6 +367,18 @@ extension SettingsBackup {
             settings.snippetsShowInLauncher = flag
             count += 1
         }
+        if let flag = s.navigationEnabled {
+            settings.navigationEnabled = flag
+            count += 1
+        }
+        if let apps = s.menuSearchDisabledApps {
+            settings.menuSearchDisabledApps = apps
+            count += 1
+        }
+        if let flag = s.menuSearchShowsAppleMenu {
+            settings.menuSearchShowsAppleMenu = flag
+            count += 1
+        }
         if let flag = s.windowManagementEnabled {
             settings.windowManagementEnabled = flag
             count += 1
@@ -332,8 +391,12 @@ extension SettingsBackup {
             settings.windowGap = gap
             count += 1
         }
-        if let flag = s.windowCycleOnRepeat {
-            settings.windowCycleOnRepeat = flag
+        if let raw = s.windowCycle, let cycle = WindowCycle(rawValue: raw) {
+            settings.windowCycle = cycle
+            count += 1
+        }
+        if let flag = s.windowLayoutsShowInLauncher {
+            settings.windowLayoutsShowInLauncher = flag
             count += 1
         }
         if let flag = s.quicklinksEnabled {
@@ -366,6 +429,14 @@ extension SettingsBackup {
             settings.calendarShowInLauncher = flag
             count += 1
         }
+        if let raw = s.calendarLauncherLimit, let limit = CalendarLauncherLimit(rawValue: raw) {
+            settings.calendarLauncherLimit = limit
+            count += 1
+        }
+        if let flag = s.calendarIncludesTomorrow {
+            settings.calendarIncludesTomorrow = flag
+            count += 1
+        }
         if let raw = s.joinWindowMinutes, let window = JoinWindow(rawValue: raw) {
             settings.joinWindowMinutes = window
             count += 1
@@ -376,6 +447,12 @@ extension SettingsBackup {
         }
         if let raw = s.menuBarEvents, let lead = MenuBarEvents(rawValue: raw) {
             settings.menuBarEvents = lead
+            count += 1
+        }
+        if let raw = s.calendarMenuBarDisplay,
+            let display = CalendarMenuBarDisplay(rawValue: raw)
+        {
+            settings.calendarMenuBarDisplay = display
             count += 1
         }
         if let flag = s.menuBarLinkedEventsOnly {
@@ -403,15 +480,10 @@ extension SettingsBackup {
             count += 1
         }
         if let b = hotkeys.togglePalette { apply(b, .togglePalette) }
-        if let b = hotkeys.toggleClipboard { apply(b, .toggleClipboard) }
-        if let b = hotkeys.toggleEmoji { apply(b, .toggleEmoji) }
-        if let b = hotkeys.showNotes { apply(b, .showNotes) }
-        if let b = hotkeys.createNote { apply(b, .createNote) }
-        if let b = hotkeys.searchNotes { apply(b, .searchNotes) }
-        if let b = hotkeys.searchFiles { apply(b, .searchFiles) }
-        if let b = hotkeys.joinNextMeeting { apply(b, .joinNextMeeting) }
-        if let b = hotkeys.mySchedule { apply(b, .mySchedule) }
-        if let b = hotkeys.createEvent { apply(b, .createEvent) }
+        for (rawID, b) in hotkeys.commands ?? [:] {
+            guard let action = CommandID(rawValue: rawID)?.hotKeyAction else { continue }
+            apply(b, action)
+        }
         for (id, b) in hotkeys.apps ?? [:] { apply(b, .app(bundleID: id)) }
         for (id, b) in hotkeys.panes ?? [:] { apply(b, .settingsPane(bundleID: id)) }
         for (rawID, b) in hotkeys.customCommands ?? [:] {
@@ -427,6 +499,11 @@ extension SettingsBackup {
         for (rawID, b) in hotkeys.windowCommands ?? [:] {
             guard let id = WindowCommand.ID(rawValue: rawID) else { continue }
             apply(b, .windowCommand(id: id))
+        }
+        for (rawID, b) in hotkeys.windowLayouts ?? [:] {
+            guard let id = UUID(uuidString: rawID), core.windowLayouts.layout(id: id) != nil
+            else { continue }
+            apply(b, .windowLayout(id: id))
         }
         for (rawID, b) in hotkeys.quicklinks ?? [:] {
             guard let id = UUID(uuidString: rawID), core.quicklinks.quicklink(id: id) != nil else {

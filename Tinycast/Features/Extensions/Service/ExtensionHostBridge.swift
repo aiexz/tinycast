@@ -6,6 +6,8 @@ import Foundation
 protocol ExtensionHostContext: AnyObject {
     /// The extension whose command is running — the namespace for storage, cache and preferences.
     var activeExtensionName: String? { get }
+    /// Background runs report no UI: toasts, HUDs and dialogs would fire on a timer.
+    var activeLaunchType: ExtensionLaunchType { get }
     var storage: ExtensionStorage { get }
     /// The app a paste would land in — the palette's recorded `previousApp`.
     var pasteTarget: NSRunningApplication? { get }
@@ -18,13 +20,19 @@ protocol ExtensionHostContext: AnyObject {
     func popToRoot()
     func clearSearchBar()
     func openPreferences(scope: String)
+    /// Persists a `subtitle` (or clears it on `null`); a missing key leaves it alone.
+    func updateCommandMetadata(subtitle: String?)
     func present(toast: ExtensionToast) -> Int
     func update(toast id: Int, with toast: ExtensionToast)
     func hide(toast id: Int)
     func showHUD(_ text: String)
     func confirmAlert(_ alert: ExtensionAlert) async -> Bool
     func openWithPicker(path: String) async
-    func launch(command: String, extensionName: String?, arguments: [String: String]) throws
+    func launch(
+        command: String, extensionName: String?, arguments: [String: String],
+        fallbackText: String?, launchType: ExtensionLaunchType
+    ) throws
+    func launch(_ link: ExtensionDeepLink) throws
     func authorizeOAuth(options: ExtensionOAuthAuthorizeOptions) async throws -> ExtensionOAuthAuthorizeResult
     func getOAuthTokens(providerId: String) -> String?
     func setOAuthTokens(providerId: String, tokens: String)
@@ -139,7 +147,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
         case "feedback": return try await feedback(method: method, arguments: arguments)
         case "system": return try await system(method: method, arguments: arguments)
         case "fetch": return try await fetcher.request(arguments.first)
-        case "proc": return try await ExtensionAsyncProcess.run(arguments.first)
+        case "proc": return try await ExtensionAsyncProcess.wait(arguments.first)
         case "oauth": return try await oauth(method: method, arguments: arguments)
         default: throw ExtensionHostError.unknown("\(api).\(method)")
         }
@@ -262,6 +270,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
     // MARK: - Window
 
     private func window(method: String, arguments: [RenderValue]) -> Any? {
+        guard context?.activeLaunchType != .background else { return nil }
         switch method {
         case "close":
             let options = arguments.first?.objectValue ?? [:]
@@ -282,6 +291,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
 
     private func feedback(method: String, arguments: [RenderValue]) async throws -> Any? {
         guard let context else { throw ExtensionHostError.noActiveExtension }
+        guard context.activeLaunchType != .background else { return nil }
         switch method {
         case "showToast":
             guard let payload = arguments.first?.objectValue else { return nil }
@@ -369,13 +379,19 @@ final class ExtensionHostBridge: ExtensionHostAPI {
             for (key, value) in options["arguments"]?.objectValue ?? [:] {
                 launchArguments[key] = value.stringValue
             }
+            let launchType: ExtensionLaunchType =
+                options["type"]?.stringValue == ExtensionLaunchType.background.rawValue
+                ? .background : .userInitiated
             try context?.launch(
                 command: name, extensionName: options["extensionName"]?.stringValue,
-                arguments: launchArguments)
+                arguments: launchArguments, fallbackText: options["fallbackText"]?.stringValue,
+                launchType: launchType)
             return nil
 
         case "updateCommandMetadata":
-            // Subtitle metadata only shows on menu-bar commands, which Tinycast doesn't run.
+            let fields = arguments.first?.objectValue ?? [:]
+            guard fields.keys.contains("subtitle") else { return nil }
+            context?.updateCommandMetadata(subtitle: fields["subtitle"]?.stringValue)
             return nil
 
         default:
@@ -388,7 +404,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
             URL(string: target).flatMap { $0.scheme == nil ? nil : $0 }
             ?? URL(fileURLWithPath: (target as NSString).expandingTildeInPath)
         // Extensions address Raycast by scheme; handing that to the workspace would launch Raycast.
-        if let scheme = url.scheme, scheme == "raycast" || scheme == "raycastinternal" {
+        if ExtensionDeepLink.claims(url) {
             openRaycastURL(url)
             return
         }
@@ -411,10 +427,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
 
     /// A command URL runs it when installed; every other Raycast URL just brings the palette back.
     private func openRaycastURL(_ url: URL) {
-        let path = url.pathComponents.filter { $0 != "/" }
-        if url.host == "extensions", path.count >= 3,
-            (try? context?.launch(command: path[2], extensionName: path[1], arguments: [:])) != nil
-        {
+        if let link = ExtensionDeepLink.parse(url: url), (try? context?.launch(link)) != nil {
             return
         }
         context?.reopenPalette()
@@ -440,7 +453,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
         ]
     }
 
-    /// Reads the app the palette displaced, never the system-wide focus, which is our own field here.
+    /// Reads the app the palette displaced, never the system-wide focus.
     private func selectedText() throws -> String {
         guard Permissions.ensureAccessibility() else {
             throw ExtensionHostError.unsupported("getSelectedText without the Accessibility permission")
@@ -455,8 +468,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
         return text
     }
 
-    /// Joined on a linefeed, which Finder forbids in a name; the comma AppleScript defaults to would
-    /// cut any path that contains one into two paths that exist nowhere.
+    /// Joined on a linefeed, which Finder forbids in a name; a comma would split paths.
     private func finderSelection() throws -> [[String: String]] {
         let script = """
             set AppleScript's text item delimiters to linefeed

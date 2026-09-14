@@ -14,31 +14,36 @@ Independently of the folder tree, every mature subsystem has converged on the sa
 │ environment fact is an injected parameter.                                 │
 │ ⇒ Compiled verbatim by a harness, so it cannot drift.                      │
 │                                                                            │
-│ SearchRelevance · SearchScopes · LauncherRankingStore · FileSearch{Query,  │
-│ Result,Scope} · Calculator/* · EmojiCatalog · EmojiGridGeometry ·          │
-│ SystemAction · VolumeLevel ·                                               │
-│ WindowCommand · WindowLayout · WindowActionMemory · PaletteRowIndex ·      │
+│ SearchRelevance · EntryNaming · ScriptRomanization · LauncherOrder ·       │
+│ SearchScopes · LauncherRankingStore · FileSearch{Query,Result,Scope} ·      │
+│ Calculator/* · EmojiCatalog · EmojiGridGeometry · SystemAction ·            │
+│ VolumeLevel ·                                                              │
+│ WindowCommand · WindowPlacementEngine · WindowActionMemory · WindowLayout/* ·      │
+│ PaletteRowIndex ·                                                          │
 │ Uninstall{Target,SearchRoot,Rules,Protection,Plan} ·                       │
 │ Quicklink{,Destination,Store,Archive} · Notes/Model/* · Snippets/Model/* · │
 │ ShellCommandRunner · DoubleTap{Modifier,Detector} · ClipboardStore ·       │
-│ RaycastFormat · RaycastV1Decoder · AppSettingsKey · SettingsBackupCoverage │
+│ RaycastDecoder · Scrypt · AppSettingsKey · SettingsBackupCoverage          │
 │ MeetingLink · MeetingEvent · UpcomingWindow · MeetingDay · MenuBarSummary  │
-│ AutoJoinPolicy · EventDraft · SupportReminderSchedule                      │
+│ AutoJoinPolicy · EventDraft · SupportReminderSchedule ·                    │
+│ MenuSearch{Item,Shortcut,Query,TreeNode,SnapshotPolicy,Target} ·           │
+│ WindowSwitch{Entry,Order,Query}                                            │
 └──────────────────────────────────┬─────────────────────────────────────────┘
                                    │ consumed by
 ┌─ EFFECT ─────────────────────────▼─────────────────────────────────────────┐
 │ All platform I/O, one folder per feature.                                  │
 │ AppIndex · SpotlightNames · FileSearchService · SettingsPaneScanner ·      │
+│ AXWindowAccess · AXScreens · WindowInventory · WindowLayoutRunner ·        │
 │ IconCache · WindowMover · UninstallScanner · UninstallRunner ·             │
-│ SystemActionRunner · QuicklinkLauncher · SnippetTextInjector ·             │
+│ SystemActionRunner · QuicklinkLauncher · TextInjector ·             │
 │ SnippetKeywordListener · NotesRepository · CurrencyRateStore · Paster ·    │
 │ HotKeyCenter · HyperKeyTap · DoubleTapMonitor · RunningAppsMonitor ·       │
-│ CalendarStore · MeetingLauncher · MeetingClock · CameraPreviewSession ·    │
-│ SupportReminderStore                                                       │
+│ CalendarStore · MeetingLauncher · MeetingClock · CameraSession ·           │
+│ SupportReminderStore · AXMenuAccess · WindowZOrder · WindowSwitchSweep     │
 └──────────────────────────────────┬─────────────────────────────────────────┘
                                    │ published through
 ┌─ OBSERVABLE STATE ───────────────▼─────────────────────────────────────────┐
-│ 38 @MainActor @Observable stores, sessions, indices and State types        │
+│ 39 @MainActor @Observable stores, sessions, indices and State types        │
 └──────────────────────────────────┬─────────────────────────────────────────┘
                                    │ rendered by
 ┌─ VIEW ───────────────────────────▼─────────────────────────────────────────┐
@@ -78,10 +83,10 @@ the shared primitives and system shims every feature draws on. Neither may depen
 app: the stores (`AppIndex`, `ClipboardStore`, `SnippetsStore`, `QuicklinkStore`, `CustomCommandStore`,
 `FavoritesStore`, `VisibilityStore`, `AliasStore`, `LauncherRankingStore`, `CalculatorHistoryStore`,
 `CurrencyRateStore`, `FrequentEmojiStore`, `CalendarStore`), the managers, monitors and clocks
-(`ClipboardManager`,
+(`ClipboardManager`, the opt-in `ClipboardTextIndexer`,
 `HotKeyManager`, `HyperKeyTap`, `RunningAppsMonitor`, `SnippetKeywordListener`), the shared state
-(`AppSettings`, `PaletteState`, `FileSearchSession`, `UninstallSession`,
-`QuicklinkArgumentSession`, `MeetingClock`), `NotesStore`, the eighteen feature coordinators, and the
+(`AppSettings`, `PaletteState`, `FileSearchSession`, `MenuSearchSession`, `UninstallSession`,
+`CustomCommandArgumentSession`, `MeetingClock`), `NotesStore`, the twenty feature coordinators, and the
 window controllers.
 
 `AppDelegate.applicationDidFinishLaunching` calls `AppCore.shared.start()` and nothing else. That is the
@@ -98,10 +103,17 @@ fine too; deciding something with one is what the rule forbids. `showNotice`, `c
 
 New long-lived state belongs on `AppCore`, wired in `start()`. Do not create a competing singleton: this is a singleton, not a container.
 
+Clipboard text recognition is the one feature that leaves the process. `AppCore` owns the indexer;
+the stateless `ClipboardTextWorker` runs one bundled `ClipboardTextHelper` per item, from
+`Contents/Helpers`, and reaps it before returning. Vision's and PDFKit's allocations therefore belong
+to a process that exits, and the helper — which has no database, clipboard or settings access — is
+handed an input path and answers with bounded text down a pipe.
+
 ## Entry points and windows
 
-`TinycastApp` (`@main`) declares only a `MenuBarExtra` scene; everything else visible is driven
-imperatively from AppKit.
+`TinycastApp` (`@main`) declares only two `MenuBarExtra` scenes — Tinycast's own item and the
+calendar's, each inserted by one preference and independent of the other; everything else visible is
+driven imperatively from AppKit.
 
 - **Command palette** — a borderless floating `NSPanel` (`Palette/PalettePanel.swift`) hosting SwiftUI
   via `NSHostingView`, managed by `PaletteWindowController`. It toggles between a compact bar and the
@@ -130,10 +142,11 @@ imperatively from AppKit.
   height its content measured. Every route into it — the palette's menu circle, Settings → About, the
   menu bar, the launcher, and the 30-day reminder — lands on `showSupport()`, which is what moves the
   reminder's anchor. See [features/support.md](features/support.md).
-- **The camera preview** — a borderless, non-activating `CameraPreviewPanel` at `.floating`,
-  managed by `CameraPreviewController` and owned by `CalendarCoordinator` the way `NotesCoordinator`
-  owns its window. It gates a join and doubles as auto join's confirmation.
-  See [features/calendar.md](features/calendar.md).
+- **The camera surfaces** — a borderless, non-activating `CameraPanel` at `.floating`, in two
+  shapes over one `CameraSession`: `CameraPreviewController`, owned by `CalendarCoordinator`, gates a
+  join and doubles as auto join's confirmation; `CameraCoordinator`, owned by `AppCore`, is the
+  standalone `Open Camera` command. See [features/camera.md](features/camera.md) and
+  [features/calendar.md](features/calendar.md).
 - **HUDs** are separate, because a dialog asks and a HUD reports: `MessageHUDController` (the pill) and
   `VolumeHUDController` (the level box), both over a shared `HUDPresenter` that owns the
   one-at-a-time, auto-dismiss and fade policy. See [ui.md](ui.md#dialogs--hud).
@@ -144,7 +157,7 @@ macOS by itself. Nothing else in the app sets an appearance.
 
 ## Observation
 
-38 types are `@MainActor @Observable`. Nothing uses `ObservableObject` or `@Published`, and views read
+39 types are `@MainActor @Observable`. Nothing uses `ObservableObject` or `@Published`, and views read
 state through `@Environment` rather than `@EnvironmentObject`.
 
 Three things about this model are easy to get wrong:
@@ -201,9 +214,9 @@ Tinycast/
   Assets.xcassets/  the app icon and the bundled image sets some catalog symbols resolve to
   Features/
     PaletteRowIndex.swift   the flat selection index — palette-owned, so it sits at the top
-    Launcher/ Clipboard/ Calculator/ Calendar/ Emoji/ FileSearch/ Notes/ Quicklinks/ Snippets/
-    Uninstall/ SystemActions/ CustomCommands/ HotKeys/ Backup/ WindowManagement/ Onboarding/
-    Updates/ Support/ AI/ Settings/
+    Launcher/ Clipboard/ Calculator/ Calendar/ Emoji/ FileSearch/ MenuSearch/ Notes/
+    Quicklinks/ Snippets/ Uninstall/ SystemActions/ CustomCommands/ HotKeys/ Backup/
+    WindowManagement/ Onboarding/ Updates/ Support/ AI/ Settings/
     Extensions/
         Model/      pure — the harness inputs
         Service/    effects — stores, monitors, runners, AppKit glue
@@ -216,8 +229,7 @@ Tests/              the standalone harnesses, one Swift file each
 Scripts/            run-tests.sh, the two data generators, packaging, formatting, editor setup
 ```
 
-A larger feature splits into all four sub-folders; a small one stays flat, as `Onboarding/` and
-`WindowManagement/` do. `HotKeys/` has no `Settings/` because its Shortcuts pane is part of the Settings
+A larger feature splits into all four sub-folders; a small one stays flat, as `Onboarding/` does. `HotKeys/` has no `Settings/` because its Shortcuts pane is part of the Settings
 shell rather than the feature.
 
 Every `SettingsTab` maps to one `…SettingsView`, and each is a stock `Form` with

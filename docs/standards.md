@@ -74,6 +74,7 @@ fit the table.
 | `Runner` | Performs one effectful operation on request |
 | `Launcher` | An `NSWorkspace.open` wrapper specifically |
 | `Center` | The Carbon registration layer specifically |
+| `Access` | One surface's raw platform reads, shared so its walkers cannot disagree |
 | `Session` | Transient state for one in-progress interaction |
 | `State` | Shared observable state that persists nothing itself |
 | `Catalog` | Pure static namespace over a built-in list |
@@ -167,7 +168,6 @@ Budgets, not aspirations:
 
 - **Resident memory under 100 MB, always.** No feature is worth going over. Memory returns to baseline
   after the palette closes.
-- Release binary under **5 MB**.
 - Launch is the thing the app protects most. Work added to `AppCore.start()` or to an initialiser is the
   most expensive place to put it; defer it into a `Task` or do it on first use.
 - The palette must feel instant. Anything on the summon path is resolved once per show, never per render.

@@ -1,13 +1,22 @@
+import CommonCrypto
 import CryptoKit
+import Darwin
 import Foundation
 
-/// Services the JS Node shims call *synchronously*. Safe to answer inline because none of this needs
-/// the main actor: it all runs on `ExtensionRuntime`'s private JS queue, so a blocking answer can
-/// never deadlock against the UI. Binary payloads cross as base64.
-///
-/// `@unchecked Sendable`: stateless apart from `FileManager.default`, which is thread-safe.
+/// Answered inline on the JS queue, so a blocking answer can never deadlock the UI.
 final class ExtensionNodeShims: @unchecked Sendable {
     private let fileManager = FileManager.default
+    private var fileHandles: [Int32: FileHandle] = [:]
+
+    /// A lock flag like `O_EXLOCK` would block the JS queue with no way back.
+    private static let openableFlags =
+        O_RDONLY | O_WRONLY | O_RDWR | O_APPEND | O_CREAT | O_TRUNC | O_EXCL | O_NOFOLLOW
+    private static let openFileLimit = 256
+
+    func closeFiles() {
+        for handle in fileHandles.values { try? handle.close() }
+        fileHandles.removeAll()
+    }
 
     /// Returns the JSON envelope `{ok, value}` / `{ok:false, error, code}` the JS side unwraps.
     func perform(api: String, method: String, argsJSON: String) -> String {
@@ -43,10 +52,78 @@ final class ExtensionNodeShims: @unchecked Sendable {
     private func dispatch(api: String, method: String, arguments: [Any]) throws -> Any? {
         switch api {
         case "fs": return try filesystem(method: method, arguments: arguments)
+        case "os": return try operatingSystem(method: method)
         case "proc": return try process(method: method, arguments: arguments)
         case "crypto": return try crypto(method: method, arguments: arguments)
         case "zlib": return try compression(method: method, arguments: arguments)
         default: throw ShimError.failed("Unknown host module '\(api)'.", "ENOSYS")
+        }
+    }
+
+    // MARK: - os
+
+    private func operatingSystem(method: String) throws -> Any {
+        if method == "uptime" { return ProcessInfo.processInfo.systemUptime }
+        if method == "loadavg" {
+            var averages = [Double](repeating: 0, count: 3)
+            let count = averages.withUnsafeMutableBufferPointer {
+                getloadavg($0.baseAddress, Int32($0.count))
+            }
+            guard count == Int32(averages.count) else {
+                throw ShimError.failed("Could not read system load averages.")
+            }
+            return averages
+        }
+        if method == "freemem" {
+            var statistics = vm_statistics64_data_t()
+            var count = mach_msg_type_number_t(
+                MemoryLayout<vm_statistics64_data_t>.stride / MemoryLayout<integer_t>.stride)
+            let result = withUnsafeMutablePointer(to: &statistics) { pointer in
+                pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                    host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
+                }
+            }
+            guard result == KERN_SUCCESS else {
+                throw ShimError.failed("Could not read free memory (Mach error \(result)).")
+            }
+            return Double(statistics.free_count) * Double(getpagesize())
+        }
+        guard method == "cpus" else {
+            throw ShimError.failed("os.\(method) is not supported.", "ENOSYS")
+        }
+
+        var processorCount: natural_t = 0
+        var processorInfo: processor_info_array_t?
+        var processorInfoCount: mach_msg_type_number_t = 0
+        let result = host_processor_info(
+            mach_host_self(), PROCESSOR_CPU_LOAD_INFO, &processorCount,
+            &processorInfo, &processorInfoCount)
+        guard result == KERN_SUCCESS, let processorInfo else {
+            throw ShimError.failed("Could not read CPU load (Mach error \(result)).")
+        }
+        defer {
+            _ = vm_deallocate(
+                mach_task_self_, vm_address_t(UInt(bitPattern: processorInfo)),
+                vm_size_t(processorInfoCount) * vm_size_t(MemoryLayout<integer_t>.stride))
+        }
+
+        let millisecondsPerTick = 1_000 / Double(CLK_TCK)
+        return (0..<Int(processorCount)).map { processor -> [String: Any] in
+            let offset = processor * Int(CPU_STATE_MAX)
+            func milliseconds(_ state: Int32) -> Double {
+                Double(processorInfo[offset + Int(state)]) * millisecondsPerTick
+            }
+            return [
+                "model": "Apple Silicon",
+                "speed": 0,
+                "times": [
+                    "user": milliseconds(CPU_STATE_USER),
+                    "nice": milliseconds(CPU_STATE_NICE),
+                    "sys": milliseconds(CPU_STATE_SYSTEM),
+                    "idle": milliseconds(CPU_STATE_IDLE),
+                    "irq": 0
+                ]
+            ]
         }
     }
 
@@ -61,6 +138,22 @@ final class ExtensionNodeShims: @unchecked Sendable {
         }
 
         switch method {
+        case "open":
+            let target = try path(0)
+            guard fileHandles.count < Self.openFileLimit else {
+                throw ShimError.failed("EMFILE: too many open files, open '\(target)'", "EMFILE")
+            }
+            let flags = (arguments[safe: 1] as? NSNumber)?.int32Value ?? O_RDONLY
+            let mode = (arguments[safe: 2] as? NSNumber)?.uint16Value ?? 0o666
+            let descriptor = Darwin.open(
+                target, (flags & Self.openableFlags) | O_CLOEXEC, mode_t(mode))
+            guard descriptor >= 0 else { throw fileError("open", target) }
+            fileHandles[descriptor] = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+            return descriptor
+
+        case "close", "read", "write":
+            return try fileOperation(method: method, arguments: arguments)
+
         case "readFile":
             let target = try path(0)
             guard let data = fileManager.contents(atPath: target) else {
@@ -82,6 +175,18 @@ final class ExtensionNodeShims: @unchecked Sendable {
                 throw ShimError.failed("EACCES: could not write '\(target)'", "EACCES")
             }
             return nil
+
+        // `createReadStream` walks a file a chunk at a time rather than materialising all of it.
+        case "readRange":
+            let target = try path(0)
+            let offset = max(0, (arguments[safe: 1] as? NSNumber)?.intValue ?? 0)
+            let count = max(0, (arguments[safe: 2] as? NSNumber)?.intValue ?? 0)
+            guard let handle = FileHandle(forReadingAtPath: target) else {
+                throw ShimError.noEntry(target, "open")
+            }
+            defer { try? handle.close() }
+            try handle.seek(toOffset: UInt64(offset))
+            return (try handle.read(upToCount: count) ?? Data()).base64EncodedString()
 
         case "exists":
             return fileManager.fileExists(atPath: try path(0))
@@ -148,6 +253,17 @@ final class ExtensionNodeShims: @unchecked Sendable {
             }
             return URL(fileURLWithPath: target).resolvingSymlinksInPath().path
 
+        case "chmod":
+            let target = try path(0)
+            guard let mode = arguments[safe: 1] as? NSNumber else {
+                throw ShimError.failed("fs.chmod needs a mode.", "EINVAL")
+            }
+            guard fileManager.fileExists(atPath: target) else {
+                throw ShimError.noEntry(target, "chmod")
+            }
+            try fileManager.setAttributes([.posixPermissions: mode], ofItemAtPath: target)
+            return nil
+
         case "mkdtemp":
             // Node's contract: the prefix already includes the parent directory.
             let prefix = try path(0)
@@ -159,6 +275,74 @@ final class ExtensionNodeShims: @unchecked Sendable {
             throw ShimError.failed("fs.\(method) is not supported.", "ENOSYS")
         }
     }
+
+    private func fileOperation(method: String, arguments: [Any]) throws -> Any? {
+        guard let descriptor = (arguments.first as? NSNumber)?.int32Value,
+            let handle = fileHandles[descriptor]
+        else { throw ShimError.failed("EBADF: bad file descriptor, \(method)", "EBADF") }
+        switch method {
+        case "close":
+            fileHandles[descriptor] = nil
+            do { try handle.close() } catch { throw fileError("close") }
+            return nil
+        case "read":
+            let count = max(0, (arguments[safe: 1] as? NSNumber)?.intValue ?? 0)
+            let position = (arguments[safe: 2] as? NSNumber)?.int64Value
+            var data = Data(count: count)
+            let read = data.withUnsafeMutableBytes { bytes in
+                uninterrupted {
+                    if let position {
+                        return Darwin.pread(descriptor, bytes.baseAddress, count, off_t(position))
+                    }
+                    return Darwin.read(descriptor, bytes.baseAddress, count)
+                }
+            }
+            guard read >= 0 else { throw fileError("read") }
+            return data.prefix(read).base64EncodedString()
+        default:
+            let data = Data(base64Encoded: arguments[safe: 1] as? String ?? "") ?? Data()
+            let position = (arguments[safe: 2] as? NSNumber)?.int64Value
+            var written = 0
+            // fs-minipass drops the remainder it is handed, so a short write truncates in silence.
+            try data.withUnsafeBytes { bytes in
+                while written < data.count {
+                    let start = bytes.baseAddress!.advanced(by: written)
+                    let remaining = data.count - written
+                    let step = uninterrupted {
+                        if let position {
+                            return Darwin.pwrite(
+                                descriptor, start, remaining, off_t(position) + off_t(written))
+                        }
+                        return Darwin.write(descriptor, start, remaining)
+                    }
+                    guard step > 0 else { throw fileError("write") }
+                    written += step
+                }
+            }
+            return written
+        }
+    }
+
+    private func uninterrupted(_ body: () -> Int) -> Int {
+        while true {
+            let result = body()
+            if result >= 0 || errno != EINTR { return result }
+        }
+    }
+
+    private func fileError(_ syscall: String, _ path: String? = nil) -> ShimError {
+        let code = errno
+        let name = Self.errorNames[code] ?? "EIO"
+        let target = path.map { " '\($0)'" } ?? ""
+        return ShimError.failed(
+            "\(name): \(String(cString: strerror(code))), \(syscall)\(target)", name)
+    }
+
+    private static let errorNames: [Int32: String] = [
+        EACCES: "EACCES", EBADF: "EBADF", EEXIST: "EEXIST", EISDIR: "EISDIR", EMFILE: "EMFILE",
+        EINVAL: "EINVAL", ENOENT: "ENOENT", ENOSPC: "ENOSPC", ENOTDIR: "ENOTDIR", EPERM: "EPERM",
+        ESRCH: "ESRCH"
+    ]
 
     private func stat(path: String, followLinks: Bool) throws -> [String: Any] {
         let attributes =
@@ -188,9 +372,29 @@ final class ExtensionNodeShims: @unchecked Sendable {
     // MARK: - child_process
 
     private func process(method: String, arguments: [Any]) throws -> Any? {
-        guard method == "run", let spec = arguments.first as? [String: Any] else {
+        if method == "kill" { return try signal(arguments) }
+        guard let spec = arguments.first as? [String: Any] else {
+            throw ShimError.failed("No command given.", "EINVAL")
+        }
+        let timeout = (spec["timeout"] as? NSNumber)?.doubleValue
+
+        switch method {
+        case "run":
+            // This runs on the JS queue, so a child that never exits would freeze the whole runtime.
+            return try launch(spec).collect(timeout: timeout)
+        case "start":
+            let child = try launch(spec)
+            // A detached child outlives its caller, so nothing ever waits on it.
+            if spec["detached"] as? Bool != true {
+                ExtensionAsyncProcess.enqueue(child, timeout: timeout)
+            }
+            return Int(child.task.processIdentifier)
+        default:
             throw ShimError.failed("child_process.\(method) is not supported.", "ENOSYS")
         }
+    }
+
+    private func launch(_ spec: [String: Any]) throws -> ExtensionAsyncProcess.Child {
         let command = spec["command"] as? String ?? ""
         guard !command.isEmpty else { throw ShimError.failed("No command given.", "EINVAL") }
         let useShell = spec["shell"] as? Bool ?? false
@@ -219,30 +423,43 @@ final class ExtensionNodeShims: @unchecked Sendable {
         let stderr = Pipe()
         task.standardOutput = stdout
         task.standardError = stderr
-        if let inputBase64 = spec["input"] as? String, let data = Data(base64Encoded: inputBase64) {
-            let stdin = Pipe()
-            task.standardInput = stdin
-            try? stdin.fileHandleForWriting.write(contentsOf: data)
-            try? stdin.fileHandleForWriting.close()
-        }
+        let input = (spec["input"] as? String).flatMap { Data(base64Encoded: $0) }
+        let stdin = input.map { _ in Pipe() }
+        if let stdin { task.standardInput = stdin }
 
         do {
             try task.run()
         } catch {
             throw ShimError.failed("Could not run '\(command)': \(error.localizedDescription)", "ENOENT")
         }
+        if let input, let stdin { feed(input, to: stdin) }
+        return ExtensionAsyncProcess.Child(task: task, stdout: stdout, stderr: stderr)
+    }
 
-        // This runs on the JS queue, so a child that never exits would freeze the whole runtime.
-        let (outData, errData) = ExtensionAsyncProcess.drain(
-            task, stdout: stdout, stderr: stderr,
-            timeout: (spec["timeout"] as? NSNumber)?.doubleValue)
+    /// A pipe holds 64 KB, so a larger input written before the child reads it would never finish.
+    private func feed(_ input: Data, to stdin: Pipe) {
+        let writer = stdin.fileHandleForWriting
+        // A child that exits without reading everything must fail the write, not SIGPIPE Tinycast.
+        _ = fcntl(writer.fileDescriptor, F_SETNOSIGPIPE, 1)
+        DispatchQueue.global(qos: .userInitiated).async {
+            try? writer.write(contentsOf: input)
+            try? writer.close()
+        }
+    }
 
-        return [
-            "stdout": outData.base64EncodedString(),
-            "stderr": errData.base64EncodedString(),
-            "status": Int(task.terminationStatus),
-            "signal": task.terminationReason == .uncaughtSignal ? "SIGTERM" : NSNull()
-        ]
+    /// `process.kill`, refusing every target that would signal Tinycast along with the child.
+    private func signal(_ arguments: [Any]) throws -> Any? {
+        guard let pid = (arguments[safe: 0] as? NSNumber).flatMap({ Int32(exactly: $0.doubleValue) }),
+            let signal = (arguments[safe: 1] as? NSNumber).flatMap({ Int32(exactly: $0.doubleValue) })
+        else { throw ShimError.failed("kill EINVAL", "EINVAL") }
+        guard pid > 0 || pid < -1, pid != getpid(), pid != -getpgrp() else {
+            throw ShimError.failed("kill EPERM", "EPERM")
+        }
+        guard Darwin.kill(pid, signal) == 0 else {
+            let name = Self.errorNames[errno] ?? "EIO"
+            throw ShimError.failed("kill \(name)", name)
+        }
+        return nil
     }
 
     // MARK: - crypto
@@ -268,6 +485,28 @@ final class ExtensionNodeShims: @unchecked Sendable {
             let data = Data(base64Encoded: arguments[safe: 1] as? String ?? "") ?? Data()
             let key = Data(base64Encoded: arguments[safe: 2] as? String ?? "") ?? Data()
             return try authenticate(algorithm: algorithm, data: data, key: key).base64EncodedString()
+
+        case "pbkdf2":
+            let algorithm = arguments[safe: 0] as? String ?? ""
+            let password = Data(base64Encoded: arguments[safe: 1] as? String ?? "") ?? Data()
+            let salt = Data(base64Encoded: arguments[safe: 2] as? String ?? "") ?? Data()
+            let iterations = (arguments[safe: 3] as? NSNumber)?.intValue ?? 0
+            let length = (arguments[safe: 4] as? NSNumber)?.intValue ?? -1
+            return try deriveKey(
+                algorithm: algorithm, password: password, salt: salt,
+                iterations: iterations, length: length
+            ).base64EncodedString()
+
+        case "cipher":
+            let mode = arguments[safe: 0] as? String ?? ""
+            let decrypt = arguments[safe: 1] as? Bool ?? false
+            let key = Data(base64Encoded: arguments[safe: 2] as? String ?? "") ?? Data()
+            let iv = Data(base64Encoded: arguments[safe: 3] as? String ?? "") ?? Data()
+            let data = Data(base64Encoded: arguments[safe: 4] as? String ?? "") ?? Data()
+            let padding = arguments[safe: 5] as? Bool ?? true
+            return try crypt(
+                mode: mode, decrypt: decrypt, key: key, iv: iv, data: data, padding: padding
+            ).base64EncodedString()
 
         default:
             throw ShimError.failed("crypto.\(method) is not supported.", "ENOSYS")
@@ -297,6 +536,102 @@ final class ExtensionNodeShims: @unchecked Sendable {
         default:
             throw ShimError.failed("Unsupported HMAC algorithm '\(algorithm)'.", "ENOSYS")
         }
+    }
+
+    private func deriveKey(
+        algorithm: String, password: Data, salt: Data, iterations: Int, length: Int
+    ) throws -> Data {
+        let function: Int
+        switch algorithm.lowercased().replacing("-", with: "") {
+        case "sha1": function = kCCPRFHmacAlgSHA1
+        case "sha224": function = kCCPRFHmacAlgSHA224
+        case "sha256": function = kCCPRFHmacAlgSHA256
+        case "sha384": function = kCCPRFHmacAlgSHA384
+        case "sha512": function = kCCPRFHmacAlgSHA512
+        default: throw ShimError.failed("Invalid digest: \(algorithm)", "ERR_CRYPTO_INVALID_DIGEST")
+        }
+        guard (1...Int(Int32.max)).contains(iterations) else {
+            throw ShimError.failed(#"The value of "iterations" is out of range."#, "ERR_OUT_OF_RANGE")
+        }
+        guard (0...Int(Int32.max)).contains(length) else {
+            throw ShimError.failed(#"The value of "keylen" is out of range."#, "ERR_OUT_OF_RANGE")
+        }
+        guard length > 0 else { return Data() }
+
+        var key = Data(count: length)
+        let status = key.withUnsafeMutableBytes { keyBytes in
+            password.withUnsafeBytes { passwordBytes in
+                salt.withUnsafeBytes { saltBytes in
+                    CCKeyDerivationPBKDF(
+                        CCPBKDFAlgorithm(kCCPBKDF2),
+                        passwordBytes.baseAddress?.assumingMemoryBound(to: CChar.self), password.count,
+                        saltBytes.baseAddress?.assumingMemoryBound(to: UInt8.self), salt.count,
+                        CCPseudoRandomAlgorithm(function), UInt32(iterations),
+                        keyBytes.baseAddress?.assumingMemoryBound(to: UInt8.self), length)
+                }
+            }
+        }
+        guard status == kCCSuccess else {
+            throw ShimError.failed("PBKDF2 failed (CommonCrypto status \(status)).")
+        }
+        return key
+    }
+
+    private func crypt(
+        mode: String, decrypt: Bool, key: Data, iv: Data, data: Data, padding: Bool
+    ) throws -> Data {
+        guard mode == "cbc" || mode == "ecb" else {
+            throw ShimError.failed("Unknown cipher", "ERR_CRYPTO_UNKNOWN_CIPHER")
+        }
+        // CCCrypt reads a full block from the IV pointer, whatever the buffer's real size.
+        guard mode == "ecb" || iv.count == kCCBlockSizeAES128 else {
+            throw ShimError.failed("Invalid initialization vector", "ERR_CRYPTO_INVALID_IV")
+        }
+
+        let blockSize = kCCBlockSizeAES128
+        let wrongBlockLength = ShimError.failed(
+            "error:1C80006B:Provider routines::wrong final block length",
+            "ERR_OSSL_WRONG_FINAL_BLOCK_LENGTH")
+        // CommonCrypto accepts padding OpenSSL rejects, which would hide a wrong key.
+        let unpads = decrypt && padding
+        guard !unpads || (!data.isEmpty && data.count % blockSize == 0) else { throw wrongBlockLength }
+
+        var options = CCOptions(0)
+        if padding && !decrypt { options |= CCOptions(kCCOptionPKCS7Padding) }
+        if mode == "ecb" { options |= CCOptions(kCCOptionECBMode) }
+
+        var output = Data(count: data.count + blockSize)
+        let capacity = output.count
+        var written = 0
+        let status = output.withUnsafeMutableBytes { outputBytes in
+            key.withUnsafeBytes { keyBytes in
+                iv.withUnsafeBytes { ivBytes in
+                    data.withUnsafeBytes { dataBytes in
+                        CCCrypt(
+                            CCOperation(decrypt ? kCCDecrypt : kCCEncrypt),
+                            CCAlgorithm(kCCAlgorithmAES), options,
+                            keyBytes.baseAddress, key.count,
+                            mode == "ecb" ? nil : ivBytes.baseAddress,
+                            dataBytes.baseAddress, data.count,
+                            outputBytes.baseAddress, capacity, &written)
+                    }
+                }
+            }
+        }
+        guard Int(status) != kCCAlignmentError else { throw wrongBlockLength }
+        guard status == kCCSuccess else {
+            throw ShimError.failed("AES failed (CommonCrypto status \(status)).")
+        }
+        output.count = written
+        guard unpads else { return output }
+
+        let padLength = Int(output.last ?? 0)
+        guard (1...blockSize).contains(padLength),
+            output.suffix(padLength).allSatisfy({ Int($0) == padLength })
+        else {
+            throw ShimError.failed("error:1C800064:Provider routines::bad decrypt", "ERR_OSSL_BAD_DECRYPT")
+        }
+        return output.dropLast(padLength)
     }
 
     // MARK: - zlib

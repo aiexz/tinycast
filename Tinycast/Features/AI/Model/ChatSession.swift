@@ -34,21 +34,22 @@ struct ChatSession: Equatable, Sendable {
             updatedAt: updatedAt, messageCount: messages.count)
     }
 
-    var requestMessages: [AIMessage] {
+    /// `textBudget` is the route's, not the chat's: on-device windows hold far less than a cloud.
+    func requestMessages(textBudget: Int = Self.defaultTextBudget) -> [AIMessage] {
         Self.boundedContext(
             messages.compactMap { message in
                 guard message.role == .user || message.state == .complete else { return nil }
                 return AIMessage(
                     role: message.role == .user ? .user : .assistant,
-                    text: message.text, images: message.images)
-            })
+                    text: message.text, images: message.images, documents: message.documents)
+            }, textBudget: textBudget)
     }
 
-    /// Provider requests cap near 25 MB; resending every turn whole walks into an opaque 413. Older
-    /// turns come back as text inside `textBudget`, and the prompt keeps its own pictures up to
-    /// `AIAttachmentBudget` — so a request stops growing with the chat. Its own text is never cut.
+    static let defaultTextBudget = 100_000
+
+    /// Older turns come back as text inside `textBudget`, so a request stops growing with the chat.
     static func boundedContext(
-        _ messages: [AIMessage], textBudget: Int = 100_000
+        _ messages: [AIMessage], textBudget: Int = Self.defaultTextBudget
     ) -> [AIMessage] {
         guard let newest = messages.lastIndex(where: { $0.role == .user }) else { return messages }
         var remaining = textBudget
@@ -66,9 +67,13 @@ struct ChatSession: Equatable, Sendable {
         // The slice opens with the user turn that prompted it; an orphaned reply reads as noise.
         while head.last?.role == .assistant { head.removeLast() }
         let prompt = messages[newest]
+        let kept = AIAttachmentBudget.bounded(prompt.images, prompt.documents)
+        // Inlined here, not in `ChatMessage.text`: the transcript's title is its first user text.
         let bounded = AIMessage(
-            role: prompt.role, text: prompt.text,
-            images: AIAttachmentBudget.bounded(prompt.images))
+            role: prompt.role,
+            text: AIAttachmentPolicy.prompt(text: prompt.text, documents: kept.documents),
+            images: kept.images,
+            documents: kept.documents.filter { $0.mimeType == AIAttachmentPolicy.pdfMIMEType })
         return head.reversed() + [bounded] + tail
     }
 

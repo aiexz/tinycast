@@ -15,7 +15,10 @@ private func snippetKeywordCallback(
 
     // A click relocates the caret, so the buffered prefix no longer describes what precedes it.
     if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
-        MainActor.assumeIsolated { listener.clearBuffer() }
+        MainActor.assumeIsolated {
+            listener.userActivity()
+            listener.clearBuffer()
+        }
         return Unmanaged.passUnretained(event)
     }
 
@@ -122,8 +125,13 @@ final class SnippetKeywordListener: HealthCheckable {
     @ObservationIgnored private var observers: [NotificationToken] = []
     /// The keystroke buffer: the tap callback mutates it per event, so it stays untracked.
     @ObservationIgnored private var policy = SnippetKeywordPolicy()
+    @ObservationIgnored private var onUserActivity: (() -> Void)?
     @ObservationIgnored
-    private var onMatch: ((StoredSnippet.ID, String, Int, NSRunningApplication?) -> Void)?
+    private var onMatch: ((StoredSnippet.ID, String, Int, InjectionTarget?) -> Void)?
+    @ObservationIgnored private var matchTask: Task<Void, Never>?
+    var isPromptingForArguments = false {
+        didSet { clearBuffer() }
+    }
     private var sessionActive = true
     private var loggedTapFailure = false
 
@@ -158,7 +166,11 @@ final class SnippetKeywordListener: HealthCheckable {
             })
     }
 
-    func start(onMatch: @escaping (StoredSnippet.ID, String, Int, NSRunningApplication?) -> Void) {
+    func start(
+        onUserActivity: @escaping () -> Void,
+        onMatch: @escaping (StoredSnippet.ID, String, Int, InjectionTarget?) -> Void
+    ) {
+        self.onUserActivity = onUserActivity
         self.onMatch = onMatch
         installObserversIfNeeded()
         healthTicker?.subscribe(self)
@@ -166,6 +178,9 @@ final class SnippetKeywordListener: HealthCheckable {
     }
 
     func stop() {
+        matchTask?.cancel()
+        matchTask = nil
+        onUserActivity = nil
         onMatch = nil
         healthTicker?.unsubscribe(self)
         observers.removeAll()
@@ -177,6 +192,14 @@ final class SnippetKeywordListener: HealthCheckable {
 
     func clearBuffer() {
         policy.reset()
+    }
+
+    /// A keystroke Tinycast did not synthesize means the caret is the reader's again, not ours.
+    func userActivity() {
+        guard !isPromptingForArguments else { return }
+        matchTask?.cancel()
+        matchTask = nil
+        onUserActivity?()
     }
 
     func healthCheck() {
@@ -293,7 +316,7 @@ final class SnippetKeywordListener: HealthCheckable {
         syncTapPresence()
     }
 
-    fileprivate func processEvent(
+    func processEvent(
         typeRaw: UInt32,
         keyCode: Int,
         flagsRaw: UInt64,
@@ -301,7 +324,7 @@ final class SnippetKeywordListener: HealthCheckable {
         eventUserData: Int64,
         secureEventInputEnabled: Bool
     ) {
-        guard isRequested, status == .active else { return }
+        guard isRequested, status == .active, !isPromptingForArguments else { return }
         let flags = CGEventFlags(rawValue: flagsRaw)
         let input = SnippetKeywordPolicy.classifyInput(
             text: text,
@@ -312,12 +335,16 @@ final class SnippetKeywordListener: HealthCheckable {
             hasCommandOrControl: flags.contains(.maskCommand) || flags.contains(.maskControl),
             isResetKey: Self.resetKeyCodes.contains(keyCode),
             isDeleteBackward: keyCode == kVK_Delete)
+        if input != .ignored { userActivity() }
         guard let match = policy.process(input, at: now()) else { return }
-        onMatch?(
-            match.snippetID,
-            match.keyword,
-            match.deletionCount,
-            NSWorkspace.shared.frontmostApplication)
+        // Sampled here, with the keystroke: by delivery the reader may have moved on.
+        let target = InjectionTarget.current()
+        // Return the triggering key to the app before a modal prompt can take focus.
+        matchTask = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            self.matchTask = nil
+            self.onMatch?(match.snippetID, match.keyword, match.deletionCount, target)
+        }
     }
 
     private static let resetKeyCodes: Set<Int> = [

@@ -12,7 +12,7 @@ final class CodexAppServerClient {
         var errorDescription: String? {
             switch self {
             case .executableMissing:
-                return "Install the Codex CLI to connect a ChatGPT subscription."
+                return "Install the Codex CLI to use your Codex account."
             case .launchFailed(let detail): return "Codex could not start: \(detail)"
             case .processExited(let detail), .requestFailed(let detail): return detail
             case .timedOut: return "Codex did not respond in time."
@@ -21,14 +21,14 @@ final class CodexAppServerClient {
     }
 
     private struct PendingRequest {
-        let continuation: CheckedContinuation<[String: CodexValue], Error>
+        let continuation: CheckedContinuation<[String: JSONValue], Error>
         let timeout: Task<Void, Never>
     }
 
-    var onNotification: ((String, [String: CodexValue]) -> Void)?
+    var onNotification: ((String, [String: JSONValue]) -> Void)?
     var onExit: ((String) -> Void)?
 
-    private let codexHome: URL
+    private let codexHome: URL?
     let workspace: URL
     private var process: Process?
     private var input: FileHandle?
@@ -37,7 +37,7 @@ final class CodexAppServerClient {
     private var nextID = 1
     private var pending: [Int: PendingRequest] = [:]
 
-    init(codexHome: URL, workspace: URL) {
+    init(codexHome: URL? = nil, workspace: URL) {
         self.codexHome = codexHome
         self.workspace = workspace
     }
@@ -46,18 +46,20 @@ final class CodexAppServerClient {
 
     func start() async throws {
         if isRunning { return }
-        guard let executable = await CodexExecutableLocator.locate() else {
+        guard let executable = await ExecutableLocator.locate("codex") else {
             throw ClientError.executableMissing
         }
         // A second caller may have started it during the lookup.
         if isRunning { return }
         do {
             try FileManager.default.createDirectory(
-                at: codexHome, withIntermediateDirectories: true)
-            try FileManager.default.createDirectory(
                 at: workspace, withIntermediateDirectories: true)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: 0o700], ofItemAtPath: codexHome.path)
+            if let codexHome {
+                try FileManager.default.createDirectory(
+                    at: codexHome, withIntermediateDirectories: true)
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: 0o700], ofItemAtPath: codexHome.path)
+            }
             try FileManager.default.setAttributes(
                 [.posixPermissions: 0o700], ofItemAtPath: workspace.path)
         } catch {
@@ -70,7 +72,6 @@ final class CodexAppServerClient {
         let stderr = Pipe()
         process.executableURL = executable
         process.arguments = [
-            "-c", "cli_auth_credentials_store=\"file\"",
             "-c", "check_for_update_on_startup=false",
             "-c", "features.apps=false",
             "-c", "features.plugins=false",
@@ -95,13 +96,15 @@ final class CodexAppServerClient {
             "/opt/homebrew/bin",
             "/usr/local/bin"
         ]
-        process.environment = ProcessInfo.processInfo.environment.merging(
+        var environment = ProcessInfo.processInfo.environment.merging(
             [
-                "CODEX_HOME": codexHome.path,
                 "NO_COLOR": "1",
                 "PATH": (commandPaths + [inheritedPath]).joined(separator: ":")
             ]
         ) { _, value in value }
+        // Tests can isolate app-server state; production deliberately inherits the user's Codex home.
+        if let codexHome { environment["CODEX_HOME"] = codexHome.path }
+        process.environment = environment
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
@@ -151,7 +154,7 @@ final class CodexAppServerClient {
 
     func request(
         method: String, params: [String: Any] = [:], timeout: Duration = .seconds(15)
-    ) async throws -> [String: CodexValue] {
+    ) async throws -> [String: JSONValue] {
         guard isRunning else { throw ClientError.processExited("Codex is not running.") }
         let id = nextID
         nextID += 1
@@ -260,7 +263,7 @@ final class CodexAppServerClient {
         finishRequest(id, with: .failure(ClientError.timedOut))
     }
 
-    private func finishRequest(_ id: Int, with result: Result<[String: CodexValue], Error>) {
+    private func finishRequest(_ id: Int, with result: Result<[String: JSONValue], Error>) {
         guard let request = pending.removeValue(forKey: id) else { return }
         request.timeout.cancel()
         request.continuation.resume(with: result)

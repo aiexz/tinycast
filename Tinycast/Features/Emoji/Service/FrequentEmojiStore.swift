@@ -7,7 +7,7 @@ struct FrequentEmoji: Codable, Hashable, Sendable {
     var lastUsed: Date
 }
 
-/// Usage counts as a capped JSON file in Caches, feeding the grid's "Frequently Used".
+/// Usage counts as a capped JSON file, feeding the grid's "Frequently Used".
 @MainActor
 @Observable
 final class FrequentEmojiStore {
@@ -19,10 +19,10 @@ final class FrequentEmojiStore {
 
     /// The empty-query grid re-reads `top()` every render, so this sorts once per tally.
     @ObservationIgnored private var sortedMemo = Memo<Int, [String]>()
-    private var revision = 0
+    private(set) var revision = 0
 
-    init() {
-        fileURL = AppPaths.caches().appendingPathComponent("emoji-frequency.json")
+    init(fileURL: URL = AppPaths.applicationSupport().appendingPathComponent("emoji-frequency.json")) {
+        self.fileURL = fileURL
 
         if let data = try? Data(contentsOf: fileURL),
             let decoded = try? JSONDecoder().decode([FrequentEmoji].self, from: data)
@@ -46,6 +46,17 @@ final class FrequentEmojiStore {
             records.sort { $0.count != $1.count ? $0.count > $1.count : $0.lastUsed > $1.lastUsed }
             records.removeLast(records.count - Self.cap)
         }
+        persist()
+    }
+
+    /// Replaces the tallies wholesale from a backup, under the same cap `record` enforces.
+    func replace(_ imported: [FrequentEmoji]) {
+        revision &+= 1
+        records = Array(
+            imported
+                .filter { !$0.glyph.isEmpty && $0.count > 0 }
+                .sorted { $0.count != $1.count ? $0.count > $1.count : $0.lastUsed > $1.lastUsed }
+                .prefix(Self.cap))
         persist()
     }
 

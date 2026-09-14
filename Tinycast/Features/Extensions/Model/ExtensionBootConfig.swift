@@ -10,7 +10,6 @@ struct ExtensionBootConfig: Sendable {
     var homeDirectory: String
     var temporaryDirectory: String
     var workingDirectory: String
-    var cpuCount: Int
     var totalMemory: Double
     var environmentVariables: [String: String]
 
@@ -36,7 +35,6 @@ struct ExtensionBootConfig: Sendable {
             homeDirectory: FileManager.default.homeDirectoryForCurrentUser.path,
             temporaryDirectory: FileManager.default.temporaryDirectory.path,
             workingDirectory: supportDirectory.path,
-            cpuCount: info.processorCount,
             totalMemory: Double(info.physicalMemory),
             environmentVariables: variables)
     }
@@ -53,7 +51,6 @@ struct ExtensionBootConfig: Sendable {
                     "homedir": homeDirectory,
                     "tmpdir": temporaryDirectory,
                     "cwd": workingDirectory,
-                    "cpus": cpuCount,
                     "totalmem": totalMemory,
                     "env": environmentVariables,
                     "execPath": ""
@@ -62,8 +59,7 @@ struct ExtensionBootConfig: Sendable {
     }
 }
 
-/// Everything one command needs at mount time: its `environment`, resolved preferences, the cache
-/// namespaces it may read synchronously, and its launch arguments.
+/// Everything one command needs at mount: environment, preferences, caches, arguments.
 struct ExtensionLaunchContext: Sendable {
     var extensionName: String
     var extensionTitle: String
@@ -75,8 +71,8 @@ struct ExtensionLaunchContext: Sendable {
     var caches: [String: [String: String]]
     var arguments: [String: String]
     var fallbackText: String?
-    /// Injected rather than read: a `Model/` type owns no environment. A running command keeps what
-    /// it booted with, so an appearance change reaches it on the next launch.
+    var launchType: ExtensionLaunchType = .userInitiated
+    /// Injected, never read: a running command keeps what it booted with.
     var isDarkAppearance: Bool
 
     func jsonString() -> String {
@@ -91,12 +87,12 @@ struct ExtensionLaunchContext: Sendable {
             "raycastVersion": ExtensionRuntimeVersion.raycastAPI,
             "textSize": "medium",
             "appearance": isDarkAppearance ? "dark" : "light",
-            "launchType": "userInitiated",
+            "launchType": launchType.rawValue,
             "canAccess": false
         ]
         environment["ownerOrAuthorName"] = extensionTitle
 
-        var launchProps: [String: Any] = ["launchType": "userInitiated", "arguments": arguments]
+        var launchProps: [String: Any] = ["launchType": launchType.rawValue, "arguments": arguments]
         if let fallbackText { launchProps["fallbackText"] = fallbackText }
 
         return ExtensionRuntime.jsonString(

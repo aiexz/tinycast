@@ -1,7 +1,6 @@
 import Foundation
 
-/// Which items are hidden from the launcher, and which categories are switched on at all. A
-/// category that is off runs nothing, so it gates shortcuts as well as the list.
+/// A category that is off runs nothing, so it gates shortcuts as well as the list.
 @MainActor
 @Observable
 final class VisibilityStore {
@@ -32,7 +31,12 @@ final class VisibilityStore {
 
     /// Whether the entry appears in the launcher: its category and the item itself must be on.
     func isVisible(_ entry: AppEntry) -> Bool {
-        isKindEnabled(entry.kind) && isItemVisible(entry)
+        isCategoryEnabled(entry) && isItemVisible(entry)
+    }
+
+    /// An entry a feature pane owns answers to that feature's switch, so no category gates it.
+    private func isCategoryEnabled(_ entry: AppEntry) -> Bool {
+        entry.settingsOwner != nil || isKindEnabled(entry.kind)
     }
 
     func isItemVisible(_ entry: AppEntry) -> Bool {
@@ -65,17 +69,15 @@ final class VisibilityStore {
         defaults.set(Array(disabledKinds), forKey: kindsKey)
     }
 
-    /// Whether a shortcut may run, the way each feature switch already guards its own funnel. An
-    /// action belonging to a feature that carries its own switch is not this store's to gate.
+    /// A feature carrying its own switch is not this store's to gate.
     func allowsHotKey(_ action: HotKeyAction) -> Bool {
         switch action {
         case .app: isKindEnabled(.application)
         case .settingsPane: isKindEnabled(.systemSettings)
         case .systemAction: isKindEnabled(.systemAction)
-        case .toggleClipboard, .toggleEmoji, .showNotes, .createNote, .searchNotes, .searchFiles,
-            .joinNextMeeting, .mySchedule, .createEvent, .aiChat:
-            isKindEnabled(.command)
-        case .togglePalette, .customCommand, .windowCommand, .quicklink, .extensionCommand:
+        case .command(let id): id.owner == nil ? isKindEnabled(.command) : true
+        case .togglePalette, .quickAction, .customCommand, .windowCommand, .windowLayout,
+            .quicklink, .extensionCommand:
             true
         }
     }

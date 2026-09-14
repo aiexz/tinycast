@@ -3,7 +3,7 @@ import SwiftUI
 /// One category's Settings sections; never filters by visibility, so hidden rows stay listed.
 struct LauncherItemsSection: View {
     let kind: AppEntry.Kind
-    let header: String
+    let anchor: SettingsAnchor
     let searchPrompt: String
 
     @Environment(AppIndex.self) private var appIndex
@@ -11,7 +11,7 @@ struct LauncherItemsSection: View {
     @State private var query = ""
 
     private var entries: [AppEntry] {
-        let scoped = appIndex.apps.filter { $0.kind == kind }
+        let scoped = appIndex.apps.filter { $0.kind == kind && $0.settingsOwner == nil }
         guard !query.isEmpty else { return scoped }
         // Membership only: score order would move the row being edited out from under the caret.
         let matched = Set(appIndex.matches(query).map(\.id))
@@ -21,11 +21,11 @@ struct LauncherItemsSection: View {
     var body: some View {
         Section {
             Toggle(isOn: enabledBinding) {
-                Text("Enable \(header)")
+                SettingsRowTitle(anchor, "Enable \(anchor.title)")
                 Text("Off hides them all and stops their shortcuts. Uncheck one below to hide just that one.")
             }
         } header: {
-            Text(header)
+            SettingsSectionHeader(anchor)
         }
 
         Section {

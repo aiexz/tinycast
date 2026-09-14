@@ -7,6 +7,7 @@ struct ChatHistoryScreen: PaletteScreen {
     let coordinator: AIChatCoordinator
     let vm: PaletteState
     let openActions: () -> Void
+    let metrics: InterfaceMetrics
 
     var rows: [ChatConversation] { history.search(vm.query) }
     let primaryActionTitle = "Open Chat"
@@ -29,12 +30,24 @@ struct ChatHistoryScreen: PaletteScreen {
 
     func secondary(at selection: Int) -> Bool { false }
 
-    func delete(at selection: Int) {
+    func perform(_ shortcut: PaletteShortcut, at selection: Int) -> Bool {
+        switch shortcut {
+        case .commandDelete, .delete:
+            delete(at: selection)
+            return true
+        case .deleteAll:
+            deleteAll()
+            return true
+        default: return false
+        }
+    }
+
+    private func delete(at selection: Int) {
         guard let conversation = conversation(at: selection) else { return }
         coordinator.deleteChat(id: conversation.id)
     }
 
-    func deleteAll() {
+    private func deleteAll() {
         Task { await coordinator.deleteAllChats() }
     }
 
@@ -64,7 +77,7 @@ struct ChatHistoryScreen: PaletteScreen {
                         openActions()
                     }
                 )
-                .frame(width: Theme.Size.clipboardListWidth)
+                .frame(width: metrics.size.clipboardListWidth)
                 Rectangle().fill(Theme.Colors.separator).frame(width: Theme.Size.hairline)
                 ChatHistoryPreview(history: history, chat: chat, conversationID: selected?.id)
             }
@@ -86,7 +99,7 @@ enum ChatHistoryActionsMenu {
                     coordinator.openChat(id: conversation.id)
                 },
                 PopoverMenuItem(
-                    title: "Delete Chat", systemImage: "trash", shortcut: "⌃X",
+                    title: "Delete Chat", systemImage: "trash", startsSection: true, shortcut: "⌃X",
                     isDestructive: true
                 ) {
                     coordinator.deleteChat(id: conversation.id)

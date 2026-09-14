@@ -8,15 +8,21 @@ enum PaletteMode: String, CaseIterable, Identifiable {
     case calculatorHistory
     case emoji
     case fileSearch
+    case menuSearch
+    case switchWindows
     case schedule
     case uninstall
     case quicklinks
-    /// Collects a quicklink's `{argument}` values; the request lives on the session.
-    case quicklinkArguments
+    case snippets
+    /// Collects a custom command's positional arguments, held on its own session.
+    case customCommandArguments
     /// A Raycast extension command rendering into the palette.
     case extensionCommand
 
     var id: String { rawValue }
+
+    /// One value at a time into the search field, so ↵ still acts with no rows to select.
+    var isArgumentForm: Bool { self == .customCommandArguments }
     var systemImage: String {
         switch self {
         case .launcher: return "magnifyingglass"
@@ -26,9 +32,13 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .calculatorHistory: return "plus.forwardslash.minus"
         case .emoji: return "face.smiling"
         case .fileSearch: return "doc.text.magnifyingglass"
+        case .menuSearch: return "menubar.rectangle"
+        case .switchWindows: return "macwindow.on.rectangle"
         case .schedule: return "calendar"
         case .uninstall: return "trash"
-        case .quicklinks, .quicklinkArguments: return Quicklink.sfSymbol
+        case .quicklinks: return Quicklink.sfSymbol
+        case .customCommandArguments: return CustomCommand.sfSymbol
+        case .snippets: return "curlybraces"
         case .extensionCommand: return "puzzlepiece.extension"
         }
     }
@@ -41,11 +51,14 @@ enum PaletteMode: String, CaseIterable, Identifiable {
         case .calculatorHistory: return "Do math, convert units, or search your past calculations…"
         case .emoji: return "Search emoji and symbols…"
         case .fileSearch: return "Search files and folders…"
-        case .schedule: return "Search today and tomorrow…"
+        case .menuSearch: return "Search menu bar items…"
+        case .switchWindows: return "Search open windows…"
+        case .schedule: return "Search your schedule…"
         case .uninstall: return "Filter files and folders by name…"
         case .quicklinks: return "Search quicklinks…"
+        case .snippets: return "Search snippets…"
         // Replaced by the pending argument's name; only reached if the session vanished mid-render.
-        case .quicklinkArguments: return "Enter a value…"
+        case .customCommandArguments: return "Enter a value…"
         // Replaced by the command's own `searchBarPlaceholder` whenever it declares one.
         case .extensionCommand: return "Search…"
         }

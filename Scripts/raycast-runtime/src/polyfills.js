@@ -1,6 +1,13 @@
 // Globals JavaScriptCore doesn't ship that extension bundles (and React's scheduler) assume.
 
 import { hostCall, hostRaw, log } from "./host.js";
+import {
+  ReadableStream,
+  TransformStream,
+  WritableStream,
+  bytesOfReadableStream,
+  readableStreamOfBytes,
+} from "./web-streams.js";
 
 const g = globalThis;
 
@@ -138,6 +145,147 @@ class TinycastHeaders {
 
 const EMPTY_BYTES = new Uint8Array(0);
 
+class TinycastBlob {
+  constructor(parts = [], options = {}) {
+    this._bytes = concatBytes((parts ?? []).map(blobPartToBytes));
+    const type = String(options?.type ?? "");
+    this._type = /^[\x20-\x7e]*$/.test(type) ? type.toLowerCase() : "";
+  }
+  get size() {
+    return this._bytes.length;
+  }
+  get type() {
+    return this._type;
+  }
+  async arrayBuffer() {
+    return this._bytes.slice().buffer;
+  }
+  async bytes() {
+    return this._bytes.slice();
+  }
+  async text() {
+    return utf8Decode(this._bytes);
+  }
+  stream() {
+    return readableStreamOfBytes(this._bytes);
+  }
+  slice(start = 0, end = this.size, contentType = "") {
+    const from = normalizeBlobIndex(start, this.size);
+    const to = normalizeBlobIndex(end, this.size);
+    return new TinycastBlob([this._bytes.subarray(Math.min(from, to), to)], { type: contentType });
+  }
+}
+
+function blobPartToBytes(part) {
+  if (part instanceof TinycastBlob) return part._bytes;
+  if (typeof part === "string") return utf8Encode(part);
+  if (part instanceof ArrayBuffer) return new Uint8Array(part);
+  if (ArrayBuffer.isView(part)) return new Uint8Array(part.buffer, part.byteOffset, part.byteLength);
+  return utf8Encode(String(part));
+}
+
+function concatBytes(chunks) {
+  const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.length, 0));
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
+function normalizeBlobIndex(value, size) {
+  const index = Number(value);
+  if (Number.isNaN(index)) return 0;
+  if (index === Infinity) return size;
+  if (index === -Infinity) return 0;
+  return Math.min(Math.max(index < 0 ? size + Math.ceil(index) : Math.floor(index), 0), size);
+}
+
+class TinycastFile extends TinycastBlob {
+  constructor(parts = [], name = "", options = {}) {
+    super(parts, options);
+    this.name = String(name);
+    this.lastModified = options?.lastModified ?? Date.now();
+  }
+}
+
+class TinycastFormData {
+  constructor() {
+    this._entries = [];
+    // Header and body must carry the same boundary, so it lives on the instance, not the encoder.
+    this._boundary = `----TinycastFormBoundary${Math.random().toString(36).slice(2, 18)}`;
+  }
+  append(name, value, filename) {
+    this._entries.push([String(name), formDataValue(value, filename)]);
+  }
+  set(name, value, filename) {
+    const key = String(name);
+    const at = this._entries.findIndex(([existing]) => existing === key);
+    this._entries = this._entries.filter(([existing]) => existing !== key);
+    this._entries.splice(at === -1 ? this._entries.length : at, 0, [key, formDataValue(value, filename)]);
+  }
+  get(name) {
+    const hit = this._entries.find(([existing]) => existing === String(name));
+    return hit === undefined ? null : hit[1];
+  }
+  getAll(name) {
+    return this._entries.filter(([existing]) => existing === String(name)).map(([, value]) => value);
+  }
+  has(name) {
+    return this._entries.some(([existing]) => existing === String(name));
+  }
+  delete(name) {
+    this._entries = this._entries.filter(([existing]) => existing !== String(name));
+  }
+  forEach(fn, thisArg) {
+    for (const [name, value] of this._entries) fn.call(thisArg, value, name, this);
+  }
+  keys() {
+    return this._entries.map(([name]) => name)[Symbol.iterator]();
+  }
+  values() {
+    return this._entries.map(([, value]) => value)[Symbol.iterator]();
+  }
+  entries() {
+    return this._entries.map(([name, value]) => [name, value])[Symbol.iterator]();
+  }
+  [Symbol.iterator]() {
+    return this.entries();
+  }
+}
+
+// A Blob entry becomes a File named "blob" unless the caller passed a filename, per the spec.
+function formDataValue(value, filename) {
+  if (!(value instanceof TinycastBlob)) return String(value);
+  if (value instanceof TinycastFile && filename === undefined) return value;
+  return new TinycastFile([value], filename ?? "blob", { type: value.type });
+}
+
+function formDataToBytes(form) {
+  const chunks = [];
+  for (const [name, value] of form._entries) {
+    const disposition =
+      value instanceof TinycastBlob
+        ? `; name="${escapeFormName(name)}"; filename="${escapeFormName(value.name)}"`
+        : `; name="${escapeFormName(name)}"`;
+    const type = value instanceof TinycastBlob ? `Content-Type: ${value.type || "application/octet-stream"}\r\n` : "";
+    chunks.push(utf8Encode(`--${form._boundary}\r\nContent-Disposition: form-data${disposition}\r\n${type}\r\n`));
+    chunks.push(value instanceof TinycastBlob ? value._bytes : utf8Encode(value));
+    chunks.push(utf8Encode("\r\n"));
+  }
+  chunks.push(utf8Encode(`--${form._boundary}--\r\n`));
+  return concatBytes(chunks);
+}
+
+function escapeFormName(value) {
+  return String(value).replace(/\n/g, "%0A").replace(/\r/g, "%0D").replace(/"/g, "%22");
+}
+
+if (!g.Blob) g.Blob = TinycastBlob;
+if (!g.File) g.File = TinycastFile;
+if (!g.FormData) g.FormData = TinycastFormData;
+
 class TinycastResponse {
   // Spec shape: axios and friends construct a Response at module scope to probe the platform.
   constructor(body = null, init = {}, url = "") {
@@ -148,12 +296,21 @@ class TinycastResponse {
     this.ok = this.status >= 200 && this.status < 300;
     this.redirected = false;
     this.type = "basic";
-    this._bytes = bodyToBytes(body) ?? EMPTY_BYTES;
+    this._stream = body instanceof ReadableStream ? body : null;
+    this._bytes = this._stream ? null : (bodyToBytes(body) ?? EMPTY_BYTES);
+    this._hasBody = body !== null && body !== undefined;
     this.bodyUsed = false;
+  }
+  // The bytes are already here, so the "stream" hands them out in reader-sized pieces — enough for
+  // an extension that guards on `response.body` and pipes it, but never progressive.
+  get body() {
+    if (!this._hasBody) return null;
+    if (!this._stream) this._stream = readableStreamOfBytes(this._bytes);
+    return this._stream;
   }
   clone() {
     const { status, statusText, headers } = this;
-    return new TinycastResponse(this._bytes, { status, statusText, headers }, this.url);
+    return new TinycastResponse(this._bytes ?? this._stream, { status, statusText, headers }, this.url);
   }
   async arrayBuffer() {
     this.bodyUsed = true;
@@ -162,17 +319,19 @@ class TinycastResponse {
   // A copy: the body outlives the read, so a caller mutating it must not affect the next reader.
   async bytes() {
     this.bodyUsed = true;
+    if (this._bytes === null) this._bytes = await bytesOfReadableStream(this._stream);
     return this._bytes.slice();
   }
   async text() {
     this.bodyUsed = true;
+    if (this._bytes === null) this._bytes = await bytesOfReadableStream(this._stream);
     return utf8Decode(this._bytes);
   }
   async json() {
     return JSON.parse(await this.text());
   }
   async blob() {
-    throw new Error("Response.blob() is not supported in Tinycast extensions.");
+    return new TinycastBlob([await this.bytes()], { type: this.headers.get("content-type") ?? "" });
   }
 }
 
@@ -189,6 +348,8 @@ class TinycastRequest {
       this.headers = new TinycastHeaders(init.headers);
       this.body = init.body;
     }
+    const implied = bodyContentType(this.body);
+    if (implied && !this.headers.has("content-type")) this.headers.set("content-type", implied);
     this.signal = init.signal;
   }
 }
@@ -214,6 +375,16 @@ async function tinycastFetch(input, init = {}) {
   );
 }
 
+// gaxios builds every error with `instanceof DOMException`, so a non-2xx response threw without it.
+class TinycastDOMException extends Error {
+  constructor(message = "", name = "Error") {
+    super(String(message));
+    this.name = String(name);
+  }
+}
+
+if (!g.DOMException) g.DOMException = TinycastDOMException;
+
 function abortError() {
   const error = new Error("The operation was aborted.");
   error.name = "AbortError";
@@ -230,6 +401,8 @@ function timeoutError() {
 function bodyToBytes(body) {
   if (body === undefined || body === null) return null;
   if (typeof body === "string") return utf8Encode(body);
+  if (body instanceof TinycastBlob) return body._bytes;
+  if (body instanceof TinycastFormData) return formDataToBytes(body);
   if (body instanceof Uint8Array) return body;
   if (body instanceof ArrayBuffer) return new Uint8Array(body);
   if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
@@ -237,9 +410,24 @@ function bodyToBytes(body) {
   return utf8Encode(String(body));
 }
 
+// Fetch spec: a body implies a Content-Type, which an OAuth token POST relies on rather than sets.
+function bodyContentType(body) {
+  if (typeof body === "string") return "text/plain;charset=UTF-8";
+  if (body instanceof URLSearchParams) return "application/x-www-form-urlencoded;charset=UTF-8";
+  if (body instanceof TinycastFormData) return `multipart/form-data; boundary=${body._boundary}`;
+  if (body instanceof TinycastBlob) return body.type || null;
+  return null;
+}
+
 function encodeBody(body) {
   const bytes = bodyToBytes(body);
   return bytes === null ? null : bytesToBase64(bytes);
+}
+
+if (!g.ReadableStream) {
+  g.ReadableStream = ReadableStream;
+  g.WritableStream = WritableStream;
+  g.TransformStream = TransformStream;
 }
 
 if (!g.fetch) {
@@ -252,12 +440,17 @@ if (!g.fetch) {
 // ─── AbortController ────────────────────────────────────────────────
 
 if (!g.AbortController) {
-  class AbortSignalShim {
+  // node-fetch brand-checks a signal by constructor name and by tag before it will send.
+  class AbortSignal {
+    static name = "AbortSignal";
     constructor() {
       this.aborted = false;
       this.reason = undefined;
       this._listeners = new Set();
       this.onabort = null;
+    }
+    get [Symbol.toStringTag]() {
+      return "AbortSignal";
     }
     addEventListener(type, listener) {
       if (type === "abort") this._listeners.add(listener);
@@ -271,17 +464,17 @@ if (!g.AbortController) {
     // The statics, not just the instance shape: a signal missing them still reads as supported at
     // the type level, so an extension calls `AbortSignal.timeout` and gets "is not a function".
     static abort(reason) {
-      const signal = new AbortSignalShim();
+      const signal = new AbortSignal();
       signal._fire(reason);
       return signal;
     }
     static timeout(ms) {
-      const signal = new AbortSignalShim();
+      const signal = new AbortSignal();
       setTimeout(() => signal._fire(timeoutError()), ms);
       return signal;
     }
     static any(signals) {
-      const merged = new AbortSignalShim();
+      const merged = new AbortSignal();
       for (const source of signals) {
         if (source?.aborted) {
           merged._fire(source.reason);
@@ -306,10 +499,10 @@ if (!g.AbortController) {
       }
     }
   }
-  g.AbortSignal = AbortSignalShim;
+  g.AbortSignal = AbortSignal;
   g.AbortController = class {
     constructor() {
-      this.signal = new AbortSignalShim();
+      this.signal = new AbortSignal();
     }
     abort(reason) {
       this.signal._fire(reason);

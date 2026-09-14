@@ -74,6 +74,26 @@ final class ExtensionCoordinator {
         runExtensionCommand(entry)
     }
 
+    /// A `raycast://extensions/…` link: the same command the launcher would run, by slug.
+    func runDeepLink(_ link: ExtensionDeepLink) {
+        guard settings.extensionsEnabled else {
+            core.showMessage("Extensions are disabled — enable them in Settings", tone: .danger)
+            return
+        }
+        guard let (owner, command) = extensions.resolve(link) else {
+            core.showMessage("No installed extension provides '\(link.commandName)'", tone: .danger)
+            return
+        }
+        guard command.mode.isSupported else {
+            core.showMessage(
+                command.mode.unsupportedReason ?? "This command isn't supported yet", tone: .danger)
+            return
+        }
+        run(
+            owner, command: command, arguments: link.arguments, fallbackText: link.fallbackText,
+            launchType: link.launchType)
+    }
+
     // MARK: - Managing one extension from the launcher
 
     /// Opens Settings on the extension a launcher row belongs to.
@@ -143,15 +163,29 @@ final class ExtensionCoordinator {
     /// A view command takes over the palette; a no-view command closes it and runs headless.
     func runExtensionCommand(_ app: AppEntry, arguments: [String: String] = [:]) {
         guard let (owner, command) = extensions.resolve(app) else { return }
+        run(owner, command: command, arguments: arguments)
+    }
+
+    private func run(
+        _ owner: InstalledExtension, command: ExtensionCommand, arguments: [String: String],
+        fallbackText: String? = nil, launchType: ExtensionLaunchType = .userInitiated
+    ) {
         switch command.mode {
         case .view:
             // Switch the palette over first, so the launching state is what the user sees.
-            palette.prepare(mode: .extensionCommand)
-            Task { await extensions.run(owner, command: command, arguments: arguments) }
+            paletteCoordinator.navigate(to: .extensionCommand)
+            // A shortcut fires while hidden, where a view command has nowhere to render.
+            if !paletteCoordinator.isVisible {
+                paletteCoordinator.showPalette(mode: .extensionCommand)
+            }
         case .noView, .menuBar:
             // A no-view command's own HUD is the feedback, so the palette gets out of the way.
             paletteCoordinator.hidePalette(restoreFocus: false)
-            Task { await extensions.run(owner, command: command, arguments: arguments) }
+        }
+        Task {
+            await extensions.run(
+                owner, command: command, arguments: arguments, fallbackText: fallbackText,
+                launchType: launchType)
         }
     }
 
@@ -168,7 +202,7 @@ final class ExtensionCoordinator {
         Task {
             if await extensions.popNavigation() { return }
             await extensions.stop()
-            palette.prepare(mode: .launcher)
+            if !palette.pop() { paletteCoordinator.hidePalette() }
         }
     }
 
@@ -189,8 +223,7 @@ final class ExtensionCoordinator {
 
     // MARK: - Host callbacks, routed here so the manager never touches a window itself
 
-    /// The app a paste from an extension should land in — the same recorded target the clipboard and
-    /// emoji paste paths use.
+    /// The same recorded target the clipboard and emoji paste paths use.
     var pasteTarget: NSRunningApplication? { paletteCoordinator.targetApp }
 
     /// `getApplications()` reports what the launcher itself indexes, so the two never disagree.
@@ -215,14 +248,12 @@ final class ExtensionCoordinator {
         palette.query = ""
     }
 
-    /// `showHUD` from an extension. Its own window, because a no-view command closes the palette
-    /// before it finishes — the pill has to outlive it.
+    /// Its own window: a no-view command closes the palette before the pill is done.
     func showHUD(_ message: String) {
         core.showMessage(message)
     }
 
-    /// `confirmAlert` from an extension. The dialog outranks the palette's level, so a view command
-    /// keeps its screen behind the question.
+    /// The dialog outranks the palette, so a view command keeps its screen behind it.
     func confirmExtensionAlert(_ alert: ExtensionAlert) async -> Bool {
         NSApp.activate(ignoringOtherApps: true)
         return await core.confirm(

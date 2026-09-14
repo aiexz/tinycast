@@ -1,17 +1,17 @@
 import SwiftUI
 
-/// Renders parsed markdown. The body is erased on purpose: a list or quote nests another
-/// `MarkdownView`, and an opaque `Body` would make that a circular type.
+/// Renders parsed markdown; the body is erased so a nested list cannot make `Body` circular.
 struct MarkdownView: View {
+    @Environment(\.metrics) private var metrics
     let blocks: [MarkdownBlock]
-    var spacing = Theme.Spacing.lg
+    var spacing: CGFloat?
 
     var body: AnyView {
         AnyView(
-            VStack(alignment: .leading, spacing: spacing) {
+            VStack(alignment: .leading, spacing: spacing ?? metrics.spacing.lg) {
                 ForEach(Array(blocks.enumerated()), id: \.offset) { offset, block in
                     MarkdownBlockView(block: block)
-                        .padding(.top, offset > 0 && block.isHeading ? Theme.Spacing.sm : 0)
+                        .padding(.top, offset > 0 && block.isHeading ? metrics.spacing.sm : 0)
                 }
             })
     }
@@ -26,16 +26,17 @@ extension MarkdownBlock {
 }
 
 private struct MarkdownBlockView: View {
+    @Environment(\.metrics) private var metrics
     let block: MarkdownBlock
 
     var body: some View {
         switch block {
         case .heading(let level, let text):
-            Text(MarkdownInline.attributed(text))
-                .font(MarkdownInline.headingFont(level))
+            Text(MarkdownInline.attributed(text, metrics))
+                .font(MarkdownInline.headingFont(level, metrics))
                 .fixedSize(horizontal: false, vertical: true)
         case .paragraph(let text):
-            Text(MarkdownInline.attributed(text))
+            Text(MarkdownInline.attributed(text, metrics))
                 .fixedSize(horizontal: false, vertical: true)
         case .bulletList(let items):
             MarkdownListView(items: items, start: nil)
@@ -56,17 +57,19 @@ private struct MarkdownBlockView: View {
 }
 
 private struct MarkdownListView: View {
+
+    @Environment(\.metrics) private var metrics
     let items: [MarkdownBlock.Item]
     /// Nil for a bulleted list; otherwise the number the first item counts from.
     let start: Int?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+        VStack(alignment: .leading, spacing: metrics.spacing.xs) {
             ForEach(Array(items.enumerated()), id: \.offset) { offset, item in
-                HStack(alignment: .firstTextBaseline, spacing: Theme.Spacing.sm) {
+                HStack(alignment: .firstTextBaseline, spacing: metrics.spacing.sm) {
                     marker(at: offset, checked: item.checked)
-                        .frame(minWidth: Theme.Size.markdownListMarker, alignment: .trailing)
-                    MarkdownView(blocks: item.blocks, spacing: Theme.Spacing.xs)
+                        .frame(minWidth: metrics.size.markdownListMarker, alignment: .trailing)
+                    MarkdownView(blocks: item.blocks, spacing: metrics.spacing.xs)
                 }
             }
         }
@@ -77,8 +80,7 @@ private struct MarkdownListView: View {
             Image(systemName: checked ? "checkmark.square.fill" : "square")
                 .foregroundStyle(checked ? Theme.Colors.success : Theme.Colors.textTertiary)
         } else if start != nil {
-            // Never wrapped: a marker past the column's width used to break "10." into "10" and a
-            // "." on the next line. Padding to the list's widest number keeps the column straight.
+            // Padding to the list's widest number keeps a marker from wrapping mid-number.
             Text(orderedMarker(at: offset))
                 .monospacedDigit()
                 .foregroundStyle(Theme.Colors.textSecondary)
@@ -98,13 +100,15 @@ private struct MarkdownListView: View {
 }
 
 private struct MarkdownQuoteView: View {
+
+    @Environment(\.metrics) private var metrics
     let blocks: [MarkdownBlock]
 
     var body: some View {
-        HStack(alignment: .top, spacing: Theme.Spacing.lg) {
-            RoundedRectangle(cornerRadius: Theme.Radius.keyCap, style: .continuous)
+        HStack(alignment: .top, spacing: metrics.spacing.lg) {
+            RoundedRectangle(cornerRadius: metrics.radius.keyCap, style: .continuous)
                 .fill(Theme.Colors.border)
-                .frame(width: Theme.Size.markdownQuoteBar)
+                .frame(width: metrics.size.markdownQuoteBar)
             MarkdownView(blocks: blocks)
                 .foregroundStyle(Theme.Colors.textSecondary)
         }

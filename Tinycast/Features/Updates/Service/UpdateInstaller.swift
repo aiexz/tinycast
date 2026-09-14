@@ -1,7 +1,6 @@
 import Foundation
 
-/// Fetches a release archive, proves it is ours, and swaps it into place.
-/// See docs/features/updates.md.
+/// Fetches a release archive, proves it is ours, and swaps it in. docs/features/updates.md
 struct UpdateInstaller: Sendable {
     enum Phase: Sendable, Equatable {
         case downloading(received: Int64, expected: Int64)
@@ -96,11 +95,10 @@ struct UpdateInstaller: Sendable {
             throw UpdateFailure.versionMismatch(
                 expected: release.version.description, found: found ?? "unknown")
         }
-        guard BundleSignature.matchesRunningApp(staged) else { throw UpdateFailure.identityMismatch }
+        guard BundleSignature.isTrusted(staged) else { throw UpdateFailure.identityMismatch }
     }
 
-    /// Read straight off disk rather than through `Bundle`, whose cache would answer for the copy
-    /// that stood at this path a moment ago.
+    /// Off disk, not through `Bundle`, whose cache would answer for the old copy.
     private static func info(at bundleURL: URL) -> [String: Any]? {
         let url = bundleURL.appending(components: "Contents", "Info.plist")
         guard let data = try? Data(contentsOf: url),
