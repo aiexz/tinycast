@@ -400,12 +400,15 @@ reset — and recall aggregates every stored query the typed one is a prefix of 
 `w` and `wh`, at a sixteenth of the rows. The 1,000-record cap therefore holds ~1,000 distinct habits
 rather than ~60.
 
-**The opening list stays alphabetical.** Frecency was tried there and reverted: with the learned
-apps floating to the top and the alphabet resuming below them, the section is sorted by two
-principles with nothing marking the seam, which reads as a scrambled list and moves under the user's
-muscle memory as they use it. Ranking a section needs a labelled group of its own, not a resort in
-place. So nothing is recorded or recalled under `""`, and direct hotkeys and ⌘-digit favorite
-launches still teach nothing either.
+**The opening list stays alphabetical outside a labelled Recommended section.** Frecency does not
+resort the whole empty-query list: learned entries appear in their own section rather than floating
+above an otherwise alphabetical list. Every palette activation records an overall frecency entry
+under `""` — including category listings and query-driven rows, which are deliberately not learned
+under the category name or the typed text. When the query is empty, up to five frequently launched
+non-favorite launcher entries appear in the Recommended section when
+`AppSettings.showRecommendedApps` is enabled. Searches remain upstream-ranked, and the overall
+empty-query frecency is used only to order those recommendations. Direct hotkeys and ⌘-digit
+favorite launches still teach nothing either.
 
 Learned data stays on device in `launcher-ranking.json`; a result that has learned ranking offers a
 per-item reset in its Actions menu, and users can clear all learned ranking in General Settings.

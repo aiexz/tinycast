@@ -1,5 +1,9 @@
 # Tinycast
 
+> This fork matches the original Tinycast except for two additions: up to five recommended items
+> appear at the top of the empty launcher, based on launch history (disable in Settings), and an
+> opt-in Instant Space Swipes setting switches Spaces without the slide animation.
+
 **A tiny, fully native macOS launcher. One hotkey, everything you reach for all day, under 100 MB of
 RAM.**
 

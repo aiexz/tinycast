@@ -35,7 +35,7 @@ final class LauncherRankingStore {
             let decoded = try? JSONDecoder().decode([LauncherRankingRecord].self, from: data)
         {
             records = decoded.filter {
-                !$0.itemKey.isEmpty && !$0.submittedQuery.isEmpty && $0.count > 0
+                !$0.itemKey.isEmpty && $0.count > 0
             }
         } else {
             records = []
@@ -49,21 +49,28 @@ final class LauncherRankingStore {
         await writeTask?.value
     }
 
-    /// One row per submitted query; `usage` recalls it under every prefix the user might type.
+    /// Records every interactive launch overall and, when queried, under the submitted query.
+    /// Search ranking expands submitted queries across prefixes; recommendations use the overall row.
     func record(itemKey: String, query: String) {
-        let query = Self.normalize(query)
-        guard !itemKey.isEmpty, !query.isEmpty, query.count <= Self.queryLimit else { return }
-
+        guard !itemKey.isEmpty else { return }
+        let normalized = Self.normalize(query)
         let timestamp = now()
-        if let index = records.firstIndex(where: {
-            $0.itemKey == itemKey && $0.submittedQuery == query
-        }) {
-            records[index].count += 1
-            records[index].lastUsed = timestamp
-        } else {
-            records.append(
-                LauncherRankingRecord(
-                    itemKey: itemKey, submittedQuery: query, count: 1, lastUsed: timestamp))
+        var targets = [""]
+        if !normalized.isEmpty, normalized.count <= Self.queryLimit {
+            targets.append(normalized)
+        }
+
+        for target in targets {
+            if let index = records.firstIndex(where: {
+                $0.itemKey == itemKey && $0.submittedQuery == target
+            }) {
+                records[index].count += 1
+                records[index].lastUsed = timestamp
+            } else {
+                records.append(
+                    LauncherRankingRecord(
+                        itemKey: itemKey, submittedQuery: target, count: 1, lastUsed: timestamp))
+            }
         }
 
         if records.count > Self.cap {
@@ -73,6 +80,46 @@ final class LauncherRankingStore {
             records.removeLast(records.count - Self.cap)
         }
         didMutate()
+    }
+
+    /// Returns at most `limit` recommended keys by overall launch frecency,
+    /// with deterministic source-order tie-breaking.
+    func recommendedKeys(
+        from candidateKeys: [String],
+        excluding excludedKeys: Set<String> = [],
+        limit: Int = 5
+    ) -> [String] {
+        guard limit > 0, !candidateKeys.isEmpty else { return [] }
+
+        var totals: [String: (count: Int, lastUsed: Date)] = [:]
+        for record in records where record.submittedQuery.isEmpty {
+            let running = totals[record.itemKey]
+            totals[record.itemKey] = (
+                (running?.count ?? 0) + record.count,
+                max(running?.lastUsed ?? .distantPast, record.lastUsed)
+            )
+        }
+        guard !totals.isEmpty else { return [] }
+        let bucket = totals.values.reduce(0) { $0 + $1.count }
+        let timestamp = now()
+
+        var seen = Set<String>()
+        var scored: [(key: String, usage: Int, index: Int)] = []
+        scored.reserveCapacity(min(candidateKeys.count, limit))
+        for (index, key) in candidateKeys.enumerated() {
+            guard !excludedKeys.contains(key), seen.insert(key).inserted,
+                let total = totals[key]
+            else { continue }
+            let score = Self.usage(
+                count: total.count, lastUsed: total.lastUsed,
+                share: Double(total.count) / Double(bucket), at: timestamp)
+            if score > 0 { scored.append((key: key, usage: score, index: index)) }
+        }
+
+        scored.sort { a, b in
+            a.usage != b.usage ? a.usage > b.usage : a.index < b.index
+        }
+        return Array(scored.prefix(limit).map(\.key))
     }
 
     /// What the user has taught this query; the fold and the clock read happen once, not per row.
@@ -127,7 +174,7 @@ final class LauncherRankingStore {
     func replace(_ imported: [LauncherRankingRecord]) {
         records = Array(
             imported
-                .filter { !$0.itemKey.isEmpty && !$0.submittedQuery.isEmpty && $0.count > 0 }
+                .filter { !$0.itemKey.isEmpty && $0.count > 0 }
                 .prefix(Self.cap))
         didMutate()
     }

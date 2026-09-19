@@ -23,7 +23,7 @@ struct LauncherScreen: PaletteScreen {
     private let calc: CalcResult?
     /// The colour the query itself spells, if it spells one; nil for every other query.
     private let color: ColorValue?
-    /// Sections stand in for the ranked Results list, which a typed query collapses to.
+    /// Sections draw the empty query's Favorites/Recommended groups and category listings.
     private let showSections: Bool
     /// Only the empty query pins favorites — a category shows its sections without one of its own.
     private let pinsFavorites: Bool

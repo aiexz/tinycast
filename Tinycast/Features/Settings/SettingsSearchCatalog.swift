@@ -168,7 +168,10 @@ enum SettingsSearchCatalog {
             keywords: ["decimal", "comma", "separator", "locale", "region", "thousands"]),
         .init(
             .generalSearch, "Learned ranking",
-            keywords: ["reset", "history", "order", "privacy"])
+            keywords: ["reset", "history", "order", "privacy"]),
+        .init(
+            .generalSearch, "Show recommended items",
+            keywords: ["frequently opened", "launcher", "search"])
     ]
 
     private static let applications: [SettingsSearchEntry] = [

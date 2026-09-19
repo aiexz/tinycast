@@ -94,7 +94,8 @@ struct LauncherList: View {
         }
         var rows: [Row] = cardRows
         let favorites = results.prefix(favoriteCount)
-        let rest = results.dropFirst(favoriteCount)
+        let recommended = results.dropFirst(favoriteCount).prefix(while: \.isRecommended)
+        let rest = results.dropFirst(favoriteCount + recommended.count)
         var grouped: [AppEntry.Kind: [AppEntry]] = [:]
         for app in rest { grouped[app.kind, default: []].append(app) }
         if !favorites.isEmpty {
@@ -103,6 +104,10 @@ struct LauncherList: View {
                 contentsOf: favorites.enumerated().map {
                     .app($1, slot: FavoriteSlots.digit(at: $0))
                 })
+        }
+        if !recommended.isEmpty {
+            rows.append(.header("Recommended"))
+            rows.append(contentsOf: recommended.map { .app($0, slot: nil) })
         }
         // Publication order, so rows match the flat index.
         let kinds: [AppEntry.Kind] = [

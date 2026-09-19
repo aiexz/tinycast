@@ -65,12 +65,13 @@ final class LauncherCoordinator {
     func launch(
         _ app: AppEntry, searchQuery: String? = nil, arguments: [String: String] = [:]
     ) {
-        // A category listing is no search: learning it would rank the row under "s".
+        // Category listings and query-driven rows are learned overall, never under the label or text.
         if let searchQuery, AppEntry.Kind.named(by: searchQuery) == nil,
             !CommandCatalog.isQueryDriven(app)
         {
             ranking.record(itemKey: app.preferenceKey, query: searchQuery)
         }
+        ranking.record(itemKey: app.preferenceKey, query: "")
         // Commands dispatch before the palette hides: mode-switching commands keep it open.
         if app.kind == .command {
             guard let id = CommandCatalog.command(for: app) else { return }

@@ -266,61 +266,60 @@ struct RootPaletteView: View {
             && screen.hasPrimaryAction(at: sel)
 
         // One header position, so focus survives the swap. See docs/features/palette.md.
-        return keyHandlers(
-            stateObservers(
-                Group {
-                    if isCollapsed {
-                        Color.clear
-                    } else {
-                        screen.body(selection: sel, scroll: scroll)
-                    }
+        let content = AnyView(Group {
+            if isCollapsed {
+                Color.clear
+            } else {
+                screen.body(selection: sel, scroll: scroll)
+            }
+        })
+        let surface = AnyView(content
+            .safeAreaInset(edge: .top, spacing: 0) { header }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !isCollapsed {
+                    bottomBar(
+                        pillLabel: screen.primaryActionTitle, showActionGroup: showActionGroup,
+                        formPrimaryShortcut: isExtensionForm,
+                        showActions: screen.hasActions(at: sel))
                 }
-                .safeAreaInset(edge: .top, spacing: 0) { header }
-                .safeAreaInset(edge: .bottom, spacing: 0) {
-                    if !isCollapsed {
-                        bottomBar(
-                            pillLabel: screen.primaryActionTitle, showActionGroup: showActionGroup,
-                            formPrimaryShortcut: isExtensionForm,
-                            showActions: screen.hasActions(at: sel))
-                    }
+            }
+            // The panel has no title bar, so this thin top margin is the only place left to grab it.
+            .overlay(alignment: .top) { topDragStrip }
+            .modifier(
+                ExtensionToastOverlay(extensions: extensions, showing: vm.mode == .extensionCommand)
+            )
+            // Never conditionally mounted: unmounting strands SwiftUI's hover target and eats clicks.
+            .overlay {
+                Color.black.opacity(0.001)
+                    .contentShape(Rectangle())
+                    // Not a tap: a drifting press must still dismiss, the way a native menu's does.
+                    .gesture(DragGesture(minimumDistance: 0).onChanged { _ in closeMenus() })
+                    .onRightClick { closeMenus() }
+                    .allowsHitTesting(menuOpen)
+            }
+            // The menu lives in its own window; this only reports the one to hang it from.
+            .background(
+                WindowReader {
+                    hostWindow = $0
+                    installHeaderArrowHandler(in: $0)
                 }
-                // The panel has no title bar, so this thin top margin is the only place left to grab it.
-                .overlay(alignment: .top) { topDragStrip }
-                .modifier(
-                    ExtensionToastOverlay(extensions: extensions, showing: vm.mode == .extensionCommand)
-                )
-                // Never conditionally mounted: unmounting strands SwiftUI's hover target and eats clicks.
-                .overlay {
-                    Color.black.opacity(0.001)
-                        .contentShape(Rectangle())
-                        // Not a tap: a drifting press must still dismiss, the way a native menu's does.
-                        .gesture(DragGesture(minimumDistance: 0).onChanged { _ in closeMenus() })
-                        .onRightClick { closeMenus() }
-                        .allowsHitTesting(menuOpen)
-                }
-                // The menu lives in its own window; this only reports the one to hang it from.
-                .background(
-                    WindowReader {
-                        hostWindow = $0
-                        installHeaderArrowHandler(in: $0)
-                    }
-                )
-                // The window's frame is the size source, so the glass and clip stay matched.
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(PaletteBackground(window: hostWindow))
-                .overlay {
-                    Theme.Colors.dialogDimming
-                        .opacity(core.isDimmingPaletteForDialog ? 1 : 0)
-                        .allowsHitTesting(false)
-                }
-                .animation(
-                    .easeOut(
-                        duration: core.isDimmingPaletteForDialog
-                            ? Theme.Duration.dialogEnter : Theme.Duration.dialogExit),
-                    value: core.isDimmingPaletteForDialog
-                )
-                .clipShape(RoundedRectangle(cornerRadius: metrics.radius.panel, style: .continuous))),
-            selection: sel)
+            )
+            // The window's frame is the size source, so the glass and clip stay matched.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(PaletteBackground(window: hostWindow))
+            .overlay {
+                Theme.Colors.dialogDimming
+                    .opacity(core.isDimmingPaletteForDialog ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .animation(
+                .easeOut(
+                    duration: core.isDimmingPaletteForDialog
+                        ? Theme.Duration.dialogEnter : Theme.Duration.dialogExit),
+                value: core.isDimmingPaletteForDialog
+            )
+            .clipShape(RoundedRectangle(cornerRadius: metrics.radius.panel, style: .continuous)))
+        return keyHandlers(stateObservers(surface), selection: sel)
     }
 
     /// The emoji grid's observers, split out so `stateObservers` stays within type-checker reach.

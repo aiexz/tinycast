@@ -21,6 +21,7 @@ enum SettingsBackupCoverage {
         "paletteTransparency": .paletteTransparency,
         "compactMode": .compactMode,
         "showFavoritesInCompactMode": .showFavoritesInCompactMode,
+        "showRecommendedApps": .showRecommendedApps,
         "searchScopes": .searchScopes,
         "openOnCursorScreen": .openOnCursorScreen,
         "paletteDraggable": .paletteDraggable,

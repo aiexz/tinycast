@@ -21,6 +21,7 @@ enum AppSettingsKey: String, CaseIterable {
     case paletteTransparency = "paletteTransparency"
     case compactMode = "compactMode"
     case showFavoritesInCompactMode = "showFavoritesInCompactMode"
+    case showRecommendedApps = "showRecommendedApps"
     case searchScopes = "launcherSearchScopes"
     case openOnCursorScreen = "openOnCursorScreen"
     case autoSwitchInputSource = "autoSwitchInputSource"

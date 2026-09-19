@@ -173,6 +173,10 @@ struct GeneralSettingsView: View {
                     SettingsRowTitle(.generalSearch, "Learned ranking")
                     Text("Learned privately from the results you pick.")
                 }
+                Toggle(isOn: $settings.showRecommendedApps) {
+                    SettingsRowTitle(.generalSearch, "Show recommended items")
+                    Text("Show up to five frequently opened items when the search field is empty.")
+                }
             } header: {
                 SettingsSectionHeader(.generalSearch)
             }

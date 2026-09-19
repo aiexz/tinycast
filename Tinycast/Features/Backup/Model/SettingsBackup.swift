@@ -38,6 +38,7 @@ struct SettingsBackup: Codable {
         var paletteTransparency: Int?
         var compactMode: Bool?
         var showFavoritesInCompactMode: Bool?
+        var showRecommendedApps: Bool?
         var searchScopes: [String]?
         var openOnCursorScreen: Bool?
         // Safe to carry: it grants no permission class, just repositions the window.
@@ -144,6 +145,7 @@ extension SettingsBackup {
             paletteTransparency: s.paletteTransparency,
             compactMode: s.compactMode,
             showFavoritesInCompactMode: s.showFavoritesInCompactMode,
+            showRecommendedApps: s.showRecommendedApps,
             searchScopes: s.searchScopes,
             openOnCursorScreen: s.openOnCursorScreen,
             paletteDraggable: s.paletteDraggable,
@@ -356,6 +358,10 @@ extension SettingsBackup {
         }
         if let flag = s.showFavoritesInCompactMode {
             settings.showFavoritesInCompactMode = flag
+            count += 1
+        }
+        if let flag = s.showRecommendedApps {
+            settings.showRecommendedApps = flag
             count += 1
         }
         if let scopes = s.searchScopes {
