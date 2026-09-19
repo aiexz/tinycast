@@ -46,18 +46,18 @@ struct OverflowFadeMask: ViewModifier {
         return [
             .init(color: .black.opacity(1 - topStrength), location: 0),
             .init(
-                color: .black.opacity(1 - topStrength * 0.75),
+                color: .black.opacity(1 - Double(topStrength) * 0.75),
                 location: extent * 0.35),
             .init(
-                color: .black.opacity(1 - topStrength * 0.25),
+                color: .black.opacity(1 - Double(topStrength) * 0.25),
                 location: extent * 0.7),
             .init(color: .black, location: extent),
             .init(color: .black, location: 1 - extent),
             .init(
-                color: .black.opacity(1 - bottomStrength * 0.25),
+                color: .black.opacity(1 - Double(bottomStrength) * 0.25),
                 location: 1 - extent * 0.7),
             .init(
-                color: .black.opacity(1 - bottomStrength * 0.75),
+                color: .black.opacity(1 - Double(bottomStrength) * 0.75),
                 location: 1 - extent * 0.35),
             .init(color: .black.opacity(1 - bottomStrength), location: 1)
         ]

@@ -3,7 +3,7 @@ import AppKit
 /// Single owner of every long-lived manager. Wired up once from the app delegate.
 @MainActor
 @Observable
-final class AppCore {
+final class AppCore: HealthCheckable {
     static let shared = AppCore()
 
     let launcherRanking: LauncherRankingStore
@@ -23,9 +23,12 @@ final class AppCore {
     let hyperKeyTap = HyperKeyTap()
     let windowMover = WindowMover()
     let spaceSwitcher = SpaceSwitcher()
+    let instantSpaceSwipeMonitor: InstantSpaceSwipeMonitor
     let inputSourceSwitcher = InputSourceSwitcher()
     let settings: AppSettings
     @ObservationIgnored private var appearanceObservation: NSKeyValueObservation?
+    @ObservationIgnored private var instantSpaceSwipeFailureReported = false
+    @ObservationIgnored private var instantSpaceSwipeHealthSubscribed = false
     @ObservationIgnored private let iconStyle = IconStyleMonitor()
     let favorites = FavoritesStore()
     let visibility = VisibilityStore()
@@ -205,6 +208,19 @@ final class AppCore {
             isShowingDialog = isPresenting
         })
     private let healthTicker = HealthTicker()
+    /// Retries the non-prompting event tap as Accessibility access changes outside Tinycast.
+    func healthCheck() {
+        guard settings.windowManagementEnabled, settings.instantSpaceSwipes else {
+            instantSpaceSwipeMonitor.stop()
+            instantSpaceSwipeFailureReported = false
+            if instantSpaceSwipeHealthSubscribed {
+                healthTicker.unsubscribe(self)
+                instantSpaceSwipeHealthSubscribed = false
+            }
+            return
+        }
+        applyInstantSpaceSwipeLifecycle()
+    }
 
     private init() {
         let launcherRanking = LauncherRankingStore()
@@ -218,6 +234,7 @@ final class AppCore {
         appIndex = AppIndex(ranking: launcherRanking, aliases: aliases)
         let clipboardManager = ClipboardManager(store: clipboardStore, settings: settings)
         self.clipboardManager = clipboardManager
+        instantSpaceSwipeMonitor = InstantSpaceSwipeMonitor(spaceSwitcher: spaceSwitcher)
         extensions = ExtensionManager(clipboardStore: clipboardStore)
         snippetsStore = SnippetsStore()
         textInjector = TextInjector(
@@ -266,6 +283,7 @@ final class AppCore {
             }
             customCommandCoordinator.applyCustomCommandsPresence()
             applyWindowCommandsPresence()
+            applyInstantSpaceSwipeLifecycle()
             customWindowSizes.onChange = { [weak self] _ in
                 self?.customWindowSizeCoordinator.applyCustomWindowSizesPresence()
             }
@@ -465,6 +483,9 @@ final class AppCore {
     }
 
     func prepareForTermination() {
+        instantSpaceSwipeMonitor.stop()
+        healthTicker.unsubscribe(self)
+        instantSpaceSwipeHealthSubscribed = false
         clipboardTextIndexer?.stop()
         // Caps Lock first: its remap is the one teardown that outlives the process.
         hyperKeyTap.prepareForTermination()
@@ -522,11 +543,13 @@ final class AppCore {
         track(
             {
                 _ = $0.windowManagementEnabled
+                _ = $0.instantSpaceSwipes
                 _ = $0.windowManagementShowInLauncher
             },
             reproject: {
                 $0.applyWindowCommandsPresence()
                 $0.customWindowSizeCoordinator.applyCustomWindowSizesPresence()
+                $0.applyInstantSpaceSwipeLifecycle()
             })
         track(
             {
@@ -636,6 +659,38 @@ final class AppCore {
     private func applyWindowCommandsPresence() {
         let visible = settings.windowManagementEnabled && settings.windowManagementShowInLauncher
         appIndex.setWindowCommandsVisible(visible)
+    }
+    private func applyInstantSpaceSwipeLifecycle() {
+        guard settings.windowManagementEnabled, settings.instantSpaceSwipes else {
+            instantSpaceSwipeMonitor.stop()
+            instantSpaceSwipeFailureReported = false
+            if instantSpaceSwipeHealthSubscribed {
+                healthTicker.unsubscribe(self)
+                instantSpaceSwipeHealthSubscribed = false
+            }
+            return
+        }
+
+        if !instantSpaceSwipeHealthSubscribed {
+            healthTicker.subscribe(self)
+            instantSpaceSwipeHealthSubscribed = true
+        }
+        if !Permissions.isAccessibilityTrusted() || !instantSpaceSwipeMonitor.start() {
+            instantSpaceSwipeMonitor.stop()
+            guard !instantSpaceSwipeFailureReported else { return }
+            instantSpaceSwipeFailureReported = true
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                let openSettings = await self.reportFailure(
+                    title: "Couldn't Enable Instant Space Swipes",
+                    message: "Tinycast couldn't listen for horizontal trackpad swipes. Make sure "
+                        + "Accessibility access is granted.",
+                    symbol: "hand.draw", recovery: "Open Settings")
+                if openSettings { Permissions.openAccessibilitySettings() }
+            }
+        } else {
+            instantSpaceSwipeFailureReported = false
+        }
     }
 
     // MARK: - Interruption

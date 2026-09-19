@@ -404,6 +404,9 @@ enum SettingsSearchCatalog {
             .windowManagementOptions, "Gap between windows",
             keywords: ["padding", "spacing", "margin", "points"]),
         .init(
+            group: .windowManagementOptions, "Instant Space Swipes",
+            keywords: ["trackpad", "gesture", "swipe", "spaces", "instant", "horizontal"]),
+        .init(
             group: .windowManagementOptions, "Window commands",
             keywords: ["shortcut", "left half", "maximize", "center"]),
         .init(

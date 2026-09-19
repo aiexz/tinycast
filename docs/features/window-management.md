@@ -301,6 +301,12 @@ earlier makes the Space slide back before it settles. `SpaceGesture` owns both t
 encodings can never drift apart, and the runtime OS selects between them: the SDK cannot, because a
 build made on 26 still has to work on 27.
 
+The optional **Instant Space Swipes** setting applies the same macOS 27 synthetic payload to
+physical horizontal trackpad gestures. `InstantSpaceSwipeMonitor` intercepts the DockControl 30 /
+HID type 23 sequence, chooses `.next` or `.previous` from the first finite nonzero horizontal
+progress, and hands the switch to `SpaceSwitcher`. It is off by default because it intercepts system
+input, and this undocumented hardware path still needs proof on physical trackpads.
+
 Three details are load-bearing and each was expensive to learn:
 
 - **Phases are paced ~10 ms apart on macOS 27.** Posted back-to-back they coalesce and the Dock moves
@@ -342,9 +348,10 @@ quantize to zero and the gesture would do nothing.
   `WindowCommandCoordinator.runCustomWindowSize(id:)`, the same funnel and the same feature gate.
 - **`AppIndex.setCustomWindowSizes(_:)`** publishes the custom-size slice immediately after the
   window commands, inside the same section. Custom sizes and their bindings ride in settings backups.
-- **Settings** — `windowManagementEnabled` (off), `windowManagementShowInLauncher` (on), `windowGap`
-  (0) and `windowCycle` (`.off`). All four ride in settings backups: unlike `snippetsEnabled` they
-  grant no permission class of their own.
+- **Settings** — `windowManagementEnabled` (off), `instantSpaceSwipes` (off),
+  `windowManagementShowInLauncher` (on), `windowGap` (0) and `windowCycle` (`.off`). All except
+  `instantSpaceSwipes` ride in settings backups: the physical swipe setting intercepts input, so a
+  backup must not enable it.
 - **Per-command visibility** reuses `VisibilityStore` as-is; clearing a recorded shortcut is how a
   hotkey is disabled, so there is no separate per-command enabled flag. Window commands deliberately
   get **no** launcher-category pane of their own — they are managed inside Settings › Window
