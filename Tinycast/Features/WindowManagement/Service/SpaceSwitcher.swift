@@ -1,4 +1,5 @@
 import CoreGraphics
+import Darwin
 import Foundation
 
 /// Switches Space with a synthetic Dock swipe, so macOS skips its sliding transition.
@@ -32,6 +33,9 @@ final class SpaceSwitcher {
         phase: SpaceGesture.Phase, direction: SpaceDirection
     ) -> CGEvent? {
         guard let event = CGEvent(source: nil) else { return nil }
+        // Physical HID swipes carry source PID zero; mark our synthetic events so the tap passes them.
+        event.setIntegerValueField(
+            .eventSourceUnixProcessID, value: Int64(getpid()))
         // A freshly created event carries no timestamp, which the payload cannot be built without.
         let timestamp = mach_absolute_time()
         let fields = SpaceGesture.fields(

@@ -37,9 +37,10 @@ entries and a still-registered shortcut moves nothing.
 | `Model/WindowActionMemory.swift`     | Foundation + CoreGraphics    | **Pure.** Per-window cycle position and restore point               |
 | `Model/SpaceGesture.swift`           | Foundation                   | **Pure.** The Dock-swipe field tables and the IOHID payload bytes   |
 | `Service/AXWindowAccess.swift`       | AppKit + ApplicationServices | `@MainActor`. Every `AXUIElement` call, and the one write sequence  |
-| `Service/AXScreens.swift`            | AppKit + ColorSync           | `@MainActor`. `AXGeometry`, the one coordinate flip                 |
+| `Service/AXScreens.swift`            | AppKit + ColorSync            | `@MainActor`. `AXGeometry`, the one coordinate flip                 |
 | `Service/WindowMover.swift`          | AppKit + ApplicationServices | `@MainActor`. Command policy: cycle, restore, fullscreen            |
 | `Service/SpaceSwitcher.swift`        | CoreGraphics                 | `@MainActor`. Every `CGEvent` call and the payload splice           |
+| `Service/InstantSpaceSwipeMonitor.swift` | AppKit                    | `@MainActor`. Optional physical swipe interception                  |
 | `UI/WindowCommandCoordinator.swift`  | AppKit                       | The one funnel from a palette row or a global hotkey                |
 
 The feature also owns **[Window Layouts](window-layouts.md)** — saved multi-display arrangements
@@ -229,6 +230,12 @@ earlier makes the Space slide back before it settles. `SpaceGesture` owns both t
 encodings can never drift apart, and the runtime OS selects between them: the SDK cannot, because a
 build made on 26 still has to work on 27.
 
+The optional **Instant Space Swipes** setting applies the same macOS 27 synthetic payload to
+physical horizontal trackpad gestures. `InstantSpaceSwipeMonitor` intercepts the DockControl 30 /
+HID type 23 sequence, chooses `.next` or `.previous` from the first finite nonzero horizontal
+progress, and hands the switch to `SpaceSwitcher`. It is off by default because it intercepts system
+input, and this undocumented hardware path still needs proof on physical trackpads.
+
 Three details are load-bearing and each was expensive to learn:
 
 - **Phases are paced ~10 ms apart on macOS 27.** Posted back-to-back they coalesce and the Dock moves
@@ -265,9 +272,10 @@ quantize to zero and the gesture would do nothing.
   and hides the palette with `restoreFocus: false`: restoring focus reactivates the recorded previous
   app, and activating an app that lives on another Space pulls that Space forward — a race against the
   gesture that can land on the opposite Space from the one asked for.
-- **Settings** — `windowManagementEnabled` (off), `windowManagementShowInLauncher` (on), `windowGap`
-  (0) and `windowCycle` (`.off`). All four ride in settings backups: unlike `snippetsEnabled` they
-  grant no permission class of their own.
+- **Settings** — `windowManagementEnabled` (off), `instantSpaceSwipes` (off),
+  `windowManagementShowInLauncher` (on), `windowGap` (0) and `windowCycle` (`.off`). All except
+  `instantSpaceSwipes` ride in settings backups: the physical swipe setting intercepts input, so a
+  backup must not enable it.
 - **Per-command visibility** reuses `VisibilityStore` as-is; clearing a recorded shortcut is how a
   hotkey is disabled, so there is no separate per-command enabled flag. Window commands deliberately
   get **no** launcher-category pane of their own — they are managed inside Settings › Window

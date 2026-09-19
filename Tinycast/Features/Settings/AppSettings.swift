@@ -434,6 +434,11 @@ final class AppSettings {
         }
     }
 
+    /// Opt-in physical trackpad Space swipes; kept off because it intercepts system input.
+    var instantSpaceSwipes: Bool {
+        didSet { defaults.set(instantSpaceSwipes, forKey: Key.instantSpaceSwipes.rawValue) }
+    }
+
     var windowManagementShowInLauncher: Bool {
         didSet {
             defaults.set(
@@ -634,6 +639,7 @@ final class AppSettings {
             defaults.stringArray(forKey: Key.menuSearchDisabledApps.rawValue) ?? []
         menuSearchShowsAppleMenu = defaults.bool(forKey: Key.menuSearchShowsAppleMenu.rawValue)
         windowManagementEnabled = defaults.bool(forKey: Key.windowManagementEnabled.rawValue)
+        instantSpaceSwipes = defaults.bool(forKey: Key.instantSpaceSwipes.rawValue)
         windowManagementShowInLauncher =
             defaults.object(forKey: Key.windowManagementShowInLauncher.rawValue) == nil
             || defaults.bool(forKey: Key.windowManagementShowInLauncher.rawValue)

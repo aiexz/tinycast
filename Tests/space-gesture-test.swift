@@ -65,6 +65,7 @@ struct SpaceGestureTests {
         testPayloadShape()
         testPayloadValues()
         testRecordHeader()
+        testInstantSwipe()
 
         print("\(passes) passed, \(failures) failed")
         if failures > 0 { exit(1) }
@@ -225,4 +226,73 @@ struct SpaceGestureTests {
         expectEqual(SpaceGesture.payloadField, 4205, "the payload rides in the raw IOHID field")
         expectEqual(SpaceGesture.dataVersion, [0, 0, 0, 2], "only serialization version 2 is spliced")
     }
+    static func testInstantSwipe() {
+        var swipe = InstantSpaceSwipe()
+        expectEqual(
+            swipe.handle(phase: .changed, progress: 1),
+            .pass,
+            "an orphan changed phase passes through")
+        expectEqual(
+            swipe.handle(phase: .began),
+            .suppress,
+            "a physical began phase starts tracking and is suppressed")
+        expectEqual(
+            swipe.handle(phase: .changed, progress: 0),
+            .suppress,
+            "zero progress does not choose a Space")
+        expectEqual(
+            swipe.handle(phase: .changed, progress: .infinity),
+            .suppress,
+            "non-finite progress does not choose a Space")
+        expectEqual(
+            swipe.handle(phase: .changed, progress: 0.2),
+            .switchTo(.next),
+            "the first positive finite progress chooses next")
+        expectEqual(
+            swipe.handle(phase: .changed, progress: -0.8),
+            .suppress,
+            "a gesture chooses only once")
+        expectEqual(
+            swipe.handle(phase: .ended, velocity: -100),
+            .suppress,
+            "an ended fired gesture is suppressed and reset")
+        expectEqual(
+            swipe.handle(phase: .ended, velocity: -100),
+            .pass,
+            "an orphan ended phase passes through")
+
+        expectEqual(
+            swipe.handle(phase: .began),
+            .suppress,
+            "a second gesture can begin after reset")
+        expectEqual(
+            swipe.handle(phase: .ended, velocity: -.infinity),
+            .suppress,
+            "non-finite velocity does not switch")
+        expectEqual(
+            swipe.handle(phase: .began),
+            .suppress,
+            "a repeated began restarts the gesture")
+        expectEqual(
+            swipe.handle(phase: .ended, velocity: -100),
+            .switchTo(.previous),
+            "end velocity is the fallback direction")
+        expectEqual(
+            swipe.handle(phase: .cancelled),
+            .pass,
+            "an orphan cancellation passes through")
+        expectEqual(
+            swipe.handle(phase: .began),
+            .suppress,
+            "cancellation leaves the state ready for a new gesture")
+        expectEqual(
+            swipe.handle(phase: .cancelled),
+            .suppress,
+            "a tracked cancellation is suppressed")
+        expectEqual(
+            swipe.handle(phase: .other),
+            .pass,
+            "an unknown orphan phase passes through")
+    }
+
 }

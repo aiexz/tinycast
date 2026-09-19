@@ -68,6 +68,11 @@ struct WindowManagementSettingsView: View {
                 SettingsRowTitle(.windowManagementOptions, "Gap between windows")
                 Text("Points left between tiled windows and around the screen edge.")
             }
+
+            Toggle(isOn: $settings.instantSpaceSwipes) {
+                SettingsRowTitle(.windowManagementOptions, "Instant Space Swipes")
+                Text("Use a horizontal trackpad swipe to switch Spaces without the slide animation.")
+            }
         } header: {
             SettingsSectionHeader(.windowManagementOptions)
         }
