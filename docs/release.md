@@ -117,25 +117,3 @@ lines is load-bearing.
 Both stable casks install `Tinycast.app` under `com.tinycast.app`, so they `conflicts_with` one
 another and Homebrew routes each Mac by `depends_on`: `tinycast` requires `arch: :arm64`, and
 `tinycast-universal` takes the Intel Macs.
-
-## Website
-
-`.github/workflows/website.yml` builds `website/` (Next.js static export + Tailwind, with Fumadocs for
-the docs section) and deploys it to Cloudflare at `https://tinycast.dev/` on every push to `main`
-that touches `website/`. It needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` repo secrets.
-
-A second job publishes `website/redirect/` — a lone `CNAME` file — to GitHub Pages, which is what
-makes GitHub 301 every `https://abue-ammar.github.io/tinycast/<path>` to `https://tinycast.dev/<path>`
-at its own edge. Enable it once via **Settings → Pages → Source = GitHub Actions** and
-**Custom domain = tinycast.dev**. See [website/README.md](../website/README.md).
-
-```sh
-cd website && npm install && npm run dev     # local preview
-```
-
-`wrangler deploy` uploads `website/out` — a Next.js export lands there, not in `dist/`. Media over
-Workers' 25 MiB per-asset cap is the exception: it lives in `website/media/`, is served from an R2
-bucket behind `cdn.tinycast.dev`, and is mirrored by its own
-[`website-media.yml`](../.github/workflows/website-media.yml) so this workflow never carries it.
-Both need the same two Cloudflare secrets, and the API token needs **R2 Storage: Edit** on top of
-**Workers Scripts: Edit**.

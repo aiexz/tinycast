@@ -1,7 +1,7 @@
 import { BookOpen, Star } from "lucide-react";
 import { nav, site } from "../data/site";
 import { starCount } from "../lib/version";
-import { DiscordLogo, GitHubLogo, Logo } from "./ui/icon";
+import { DiscordLogo, GitHubLogo, Logo, SupportIcon } from "./ui/icon";
 import { Link } from "./ui/link";
 import { ThemeSwitch } from "./ui/theme-toggle";
 
@@ -40,6 +40,15 @@ export async function Nav() {
         </nav>
 
         <div className="ml-auto flex items-center gap-1">
+          <Link
+            href={site.support}
+            aria-label="Support Tinycast"
+            title="Support Tinycast"
+            className="flex h-8 items-center gap-1.5 rounded-full px-2 text-small text-fg-muted transition-colors hover:bg-tint/5 hover:text-fg sm:px-2.5"
+          >
+            <SupportIcon size={17} className="text-violet-bright" />
+            <span className="hidden sm:inline">Support</span>
+          </Link>
           <Link
             href="/docs"
             aria-label="Documentation"

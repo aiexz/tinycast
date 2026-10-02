@@ -30,7 +30,7 @@ protocol ExtensionHostContext: AnyObject {
     func openWithPicker(path: String) async
     func launch(
         command: String, extensionName: String?, arguments: [String: String],
-        fallbackText: String?, launchType: ExtensionLaunchType
+        fallbackText: String?, launchType: ExtensionLaunchType, launchContext: [String: RenderValue]
     ) throws
     func launch(_ link: ExtensionDeepLink) throws
     func authorizeOAuth(options: ExtensionOAuthAuthorizeOptions) async throws -> ExtensionOAuthAuthorizeResult
@@ -127,14 +127,22 @@ enum ExtensionHostError: LocalizedError {
 final class ExtensionHostBridge: ExtensionHostAPI {
     weak var context: ExtensionHostContext?
     private let clipboardStore: ClipboardStore
-    private let fetcher = ExtensionFetcher()
+    private let fetcher: ExtensionFetcher
     private let sockets = ExtensionWebSocketBridge()
 
-    init(clipboardStore: ClipboardStore) {
+    init(clipboardStore: ClipboardStore, fetcher: ExtensionFetcher = ExtensionFetcher()) {
         self.clipboardStore = clipboardStore
+        self.fetcher = fetcher
+    }
+
+    func scoped(to context: ExtensionHostContext) -> ExtensionHostBridge {
+        let bridge = ExtensionHostBridge(clipboardStore: clipboardStore, fetcher: fetcher)
+        bridge.context = context
+        return bridge
     }
 
     func perform(api: String, method: String, arguments: [RenderValue]) async throws -> String {
+        guard context != nil else { throw ExtensionHostError.noActiveExtension }
         let value = try await dispatch(api: api, method: method, arguments: arguments)
         return ExtensionRuntime.jsonString(from: value)
     }
@@ -150,6 +158,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
         case "fetch": return try await fetcher.request(arguments.first)
         case "websocket": return try await sockets.perform(method: method, arguments: arguments)
         case "dns": return await ExtensionNameResolver.resolve(arguments.first)
+        case "proc" where method == "read": return try await ExtensionAsyncProcess.read(arguments)
         case "proc": return try await ExtensionAsyncProcess.wait(arguments.first)
         case "oauth": return try await oauth(method: method, arguments: arguments)
         default: throw ExtensionHostError.unknown("\(api).\(method)")
@@ -174,11 +183,15 @@ final class ExtensionHostBridge: ExtensionHostAPI {
         switch method {
         case "copy", "paste":
             let content = arguments.first?.objectValue ?? [:]
+            let options = arguments[safe: 1]?.objectValue ?? [:]
+            let concealed =
+                options["concealed"]?.boolValue == true
+                || options["transient"]?.boolValue == true
             // A file goes on the pasteboard as a file, so it pastes as the picture it is.
             if let path = content["file"]?.stringValue, !path.isEmpty {
                 let target = context?.pasteTarget
                 if method == "paste" { context?.closeMainWindow(clearRootSearch: false) }
-                writeFileToPasteboard(path)
+                writeFileToPasteboard(path, concealed: method == "copy" && concealed)
                 guard method == "paste" else { return nil }
                 target?.activate()
                 Task { @MainActor in
@@ -190,7 +203,12 @@ final class ExtensionHostBridge: ExtensionHostAPI {
             }
             guard let text = clipboardText(from: content) else { return nil }
             if method == "copy" {
-                Paster.copyString(text)
+                // History records unmarked copies; ConcealedType is how secrets stay out.
+                if concealed {
+                    writeConcealedString(text)
+                } else {
+                    Paster.copyPlainText(text)
+                }
             } else {
                 Paster.pasteString(text, previousApp: context?.pasteTarget)
             }
@@ -215,7 +233,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
     }
 
     /// The file, its picture and its path: receivers choose the representation they support.
-    private func writeFileToPasteboard(_ path: String) {
+    private func writeFileToPasteboard(_ path: String, concealed: Bool) {
         let url = URL(fileURLWithPath: (path as NSString).expandingTildeInPath)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
@@ -223,7 +241,21 @@ final class ExtensionHostBridge: ExtensionHostAPI {
         if let image = NSImage(contentsOf: url) { items.append(image) }
         pasteboard.writeObjects(items)
         pasteboard.setString(url.path, forType: .string)
+        if concealed {
+            pasteboard.setData(Data(), forType: Self.concealedPasteboardType)
+        }
     }
+
+    private func writeConcealedString(_ text: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.declareTypes([.string, Self.concealedPasteboardType], owner: nil)
+        pasteboard.setString(text, forType: .string)
+        pasteboard.setData(Data(), forType: Self.concealedPasteboardType)
+    }
+
+    private static let concealedPasteboardType = NSPasteboard.PasteboardType(
+        "org.nspasteboard.ConcealedType")
 
     private func clipboardText(from content: [String: RenderValue]) -> String? {
         if let text = content["text"]?.stringValue { return text }
@@ -402,7 +434,7 @@ final class ExtensionHostBridge: ExtensionHostAPI {
             try context?.launch(
                 command: name, extensionName: options["extensionName"]?.stringValue,
                 arguments: launchArguments, fallbackText: options["fallbackText"]?.stringValue,
-                launchType: launchType)
+                launchType: launchType, launchContext: options["context"]?.objectValue ?? [:])
             return nil
 
         case "updateCommandMetadata":

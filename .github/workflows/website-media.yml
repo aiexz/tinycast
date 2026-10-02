@@ -24,6 +24,7 @@ jobs:
   upload:
     if: github.repository == 'abue-ammar/tinycast'
     runs-on: ubuntu-latest
+    environment: cloudflare
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6

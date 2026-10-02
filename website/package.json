@@ -9,11 +9,14 @@
     "start": "next start",
     "lint": "oxlint",
     "format": "prettier --write .",
-    "postinstall": "fumadocs-mdx",
+    "postinstall": "fumadocs-mdx && wrangler types worker/worker-configuration.d.ts",
     "deploy": "wrangler deploy",
-    "upload-media": "../Scripts/upload-website-media.sh"
+    "upload-media": "../Scripts/upload-website-media.sh",
+    "check:worker": "tsc -p worker",
+    "preview": "next build && wrangler dev --local-upstream localhost:8787"
   },
   "dependencies": {
+    "@polar-sh/sdk": "^0.49.0",
     "clsx": "^2.1.1",
     "fumadocs-core": "^16.14.5",
     "fumadocs-mdx": "^15.2.3",
