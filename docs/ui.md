@@ -65,7 +65,7 @@ Add a token rather than a magic number when introducing a new value.
 
 `AppSettings.interfaceSize` scales the palette and the surfaces that float with it — the ⌘K menu, the
 extension list panel, Quick Actions, dialogs and HUDs. Settings, Onboarding,
-Support, Update, About and Notes never scale.
+Update, About and Notes never scale.
 
 `DesignSystem/InterfaceMetrics.swift` stores **only a scale** and derives every value from the `Theme`
 literal, so `Theme` stays the one place a number is written down. **In any view a scaled surface can

@@ -30,7 +30,7 @@ Independently of the folder tree, every mature subsystem has converged on the sa
 │ SettingsFile{JSON,Key,Value,Format,Binding,Issue,Identity} ·               │
 │ HotKeySpelling · WindowManagementFileFormat ·                              │
 │ MeetingLink · MeetingEvent · UpcomingWindow · MeetingDay · MenuBarSummary  │
-│ AutoJoinPolicy · EventDraft · SupportReminderSchedule ·                    │
+│ AutoJoinPolicy · EventDraft ·                                             │
 │ MenuSearch{Item,Shortcut,Query,TreeNode,SnapshotPolicy,Target} ·           │
 │ WindowSwitch{Entry,Order,Query}                                            │
 └──────────────────────────────────┬─────────────────────────────────────────┘
@@ -45,7 +45,7 @@ Independently of the folder tree, every mature subsystem has converged on the sa
 │ SnippetKeywordListener · NotesRepository · CurrencyRateStore · Paster ·    │
 │ HotKeyCenter · HyperKeyTap · ModifierTapMonitor · RunningAppsMonitor ·     │
 │ CalendarStore · MeetingLauncher · MeetingClock · CameraSession ·           │
-│ SupportReminderStore · AXMenuAccess · WindowZOrder · WindowSwitchSweep ·   │
+│ AXMenuAccess · WindowZOrder · WindowSwitchSweep ·                          │
 │ AppleShortcutRunner · SettingsFileRepository · SettingsFileMonitor ·       │
 │ WindowManagementSettingsFile                                               │
 └──────────────────────────────────┬─────────────────────────────────────────┘
@@ -152,10 +152,6 @@ driven imperatively from AppKit. Extension menu extras are dynamic `NSStatusItem
   confirmations, failure reports and value prompts. Presentation is `async`, so nothing blocks the main
   actor, and the presenter refuses a second dialog while one is up — that, not a flag, is what stops a
   held hotkey stacking dialogs.
-- **Support** — a titled `AppWindowController` window owned by `SupportCoordinator`, sized to the
-  height its content measured. Every route into it — the palette's menu circle, Settings → About, the
-  menu bar, the launcher, and the 30-day reminder — lands on `showSupport()`, which is what moves the
-  reminder's anchor. See [features/support.md](features/support.md).
 - **The camera surfaces** — a borderless, non-activating `CameraPanel` at `.floating`, in two
   shapes over one `CameraSession`: `CameraPreviewController`, owned by `CalendarCoordinator`, gates a
   join and doubles as auto join's confirmation; `CameraCoordinator`, owned by `AppCore`, is the

@@ -1,15 +1,15 @@
 # Tinycast
 
-> This fork matches the original Tinycast except for an opt-in Instant Space Swipes setting
-> that switches Spaces without the slide animation.
+> A fork of [Tinycast](https://github.com/abue-ammar/tinycast) with opt-in Instant Space Swipes,
+> fork-only updates, and no in-app support prompts.
 
 **A tiny, fully native macOS launcher. One hotkey, everything you reach for all day, under 100 MB of
 RAM.**
 
 <p align="center">
-  <a href="https://github.com/abue-ammar/tinycast/releases/latest">
+  <a href="https://github.com/aiexz/tinycast/releases/latest">
     <img alt="Latest release"
-         src="https://img.shields.io/github/v/release/abue-ammar/tinycast?sort=semver&style=flat&label=release&color=1F6FEB"></a>
+         src="https://img.shields.io/github/v/release/aiexz/tinycast?sort=semver&style=flat&label=release&color=1F6FEB"></a>
   <img alt="Swift 6.0"
        src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat&logo=swift&logoColor=white">
   <img alt="macOS 26 or later"
@@ -82,30 +82,21 @@ keep it actively maintained. GitHub Sponsors isn't available in my country, so p
 
 ## Install
 
-First, add the tap:
+Download a DMG from [this fork's Releases](https://github.com/aiexz/tinycast/releases), open it,
+and drag the app into Applications.
 
-```sh
-brew trust --tap abue-ammar/tinycast   # required for third-party taps
-brew tap abue-ammar/tinycast
-```
+| Your Mac | Download |
+| --- | --- |
+| Apple silicon, macOS 26 or newer | `Tinycast-<version>.dmg` |
+| Intel, macOS 26 | `Tinycast-Universal-<version>.dmg` |
 
-Then run the one line that matches your Mac:
+Beta prereleases install `Tinycast Beta.app` beside the stable app, with separate settings and
+permissions. Beta requires Apple silicon and macOS 26 or newer.
 
-| Your Mac                         | Install                                  |
-| -------------------------------- | ---------------------------------------- |
-| Apple silicon, macOS 26 or newer | `brew install --cask tinycast`           |
-| Intel, macOS 26                  | `brew install --cask tinycast-universal` |
-
-Not sure which you have? **Apple menu → About This Mac.** Homebrew checks too, and refuses the
-wrong one.
-
-Want early builds? `brew install --cask tinycast@beta` puts `Tinycast Beta.app` beside the stable
-app, with its own settings and permissions. Apple silicon, macOS 26+.
-
-Homebrew clears the macOS quarantine flag on every install and update, so there is nothing else to
-run. Downloading a DMG from [Releases](https://github.com/abue-ammar/tinycast/releases) instead?
-Tinycast is self-signed, so clear the flag once:
+Tinycast is self-signed, so clear quarantine once after installing:
 `xattr -dr com.apple.quarantine "/Applications/Tinycast.app"`.
+Use `Tinycast Beta.app` in that command for beta. Subsequent updates are offered by the app from
+this fork's releases. There is no Homebrew tap for this fork.
 
 ## Permissions
 

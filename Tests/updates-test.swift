@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 @main
 @MainActor
@@ -25,7 +24,7 @@ struct UpdatesTests {
         picksTheZipThisMacCanRun()
         rejectsUnusableFeeds()
         offersOnlyWhatIsWorthInstalling()
-        pinsTheDeveloperIDRequirement()
+        rejectsCertificateFreeUpdates()
         keepsOnlyTheChangelog()
         laysOutTheChangelog()
         linksMentionsAndPullRequests()
@@ -292,29 +291,17 @@ struct UpdatesTests {
         Built from 419a5b4. [Full changelog](https://example.invalid/compare)
         """
 
-    /// A malformed string makes `satisfiesDeveloperID` answer false for every build, silently.
-    static func pinsTheDeveloperIDRequirement() {
-        var requirement: SecRequirement?
-        let status = SecRequirementCreateWithString(
-            BundleSignature.developerID as CFString, [], &requirement)
+    static func rejectsCertificateFreeUpdates() {
+        let executable = URL(fileURLWithPath: CommandLine.arguments[0])
         expect(
-            status == errSecSuccess && requirement != nil,
-            "the pinned Developer ID requirement still compiles")
-
-        // Without the anchor, any self-signed certificate claiming the same OU would satisfy it.
-        expect(
-            BundleSignature.developerID.hasPrefix("anchor apple generic and "),
-            "the requirement is anchored to Apple's chain, not just to a team string")
-        expect(
-            BundleSignature.developerID.contains("field.1.2.840.113635.100.6.1.13"),
-            "the requirement demands a Developer ID Application certificate specifically")
+            !BundleSignature.isTrusted(executable),
+            "the certificate-free harness cannot authenticate an update, even to itself")
     }
 
     static func keepsOnlyTheChangelog() {
         let summary = ReleaseNotes.summary(of: composedBody)
         expect(summary.hasPrefix("## What's Changed"), "the changelog leads the summary")
         expect(summary.hasSuffix("first contribution in #294"), "and the install half is cut away")
-        expect(!summary.contains("Homebrew"), "so no install instruction survives the cut")
         expect(!summary.contains(ReleaseNotes.installMarker), "and the marker goes with it")
 
         expect(

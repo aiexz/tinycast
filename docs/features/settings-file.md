@@ -85,8 +85,7 @@ because the app rewrites the file.
     "showInMenuBar": true,
     "popToRootSeconds": 0,
     "escapeKeyBehavior": "navigateBackOrClose",
-    "autoSwitchInputSource": null,
-    "supportReminders": true
+    "autoSwitchInputSource": null
   },
   "clipboard": {
     "enabled": true,

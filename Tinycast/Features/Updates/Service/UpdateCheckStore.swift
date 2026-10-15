@@ -38,7 +38,8 @@ final class UpdateCheckStore {
         channel = ReleaseChannel(bundleID: Bundle.main.bundleIdentifier)
         runningVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
             .flatMap(AppVersion.init)
-        fileURL = AppPaths.caches().appendingPathComponent("update-check.json")
+        let repository = ReleaseFeed.repository.replacingOccurrences(of: "/", with: "-")
+        fileURL = AppPaths.caches().appendingPathComponent("update-check-\(repository).json")
         guard let data = try? Data(contentsOf: fileURL),
             let cache = try? JSONDecoder().decode(Cache.self, from: data)
         else { return }

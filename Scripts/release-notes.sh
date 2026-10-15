@@ -6,14 +6,13 @@ set -euo pipefail
 BODY_OUT="${1:?usage: release-notes.sh <body.md> <discord.md>}"
 DISCORD_OUT="${2:?usage: release-notes.sh <body.md> <discord.md>}"
 
-REPO="${REPO:-abue-ammar/tinycast}"
+REPO="${REPO:-aiexz/tinycast}"
 CHANNEL="${CHANNEL:?CHANNEL is required (beta|stable)}"
 TAG="${TAG:?TAG is required, e.g. v0.9.13-beta.61}"
 SHA="${SHA:-$(git rev-parse HEAD)}"
 VERSION="${VERSION:-${TAG#v}}"
 DISPLAY_NAME="${DISPLAY_NAME:-Tinycast}"
 BUNDLE_ID="${BUNDLE_ID:-com.tinycast.app}"
-CASK="${CASK:-tinycast}"
 
 # Everything below this line is for the download page; the update window cuts here.
 MARKER="<!-- tinycast:install -->"
@@ -53,13 +52,11 @@ CHANGELOG="$(printf '%s\n' "$GENERATED" | sed -E \
     printf 'Built from %s.' "$SHA"
     if [ -n "$COMPARE_URL" ]; then printf ' [Full changelog](%s)' "$COMPARE_URL"; fi
     printf '\n\n'
-    printf '%s\n' "**Recommended:** install via Homebrew — it clears the quarantine flag automatically on every install and update, so there's nothing to run by hand:"
-    printf '```sh\nbrew trust --tap abue-ammar/tinycast\nbrew install --cask abue-ammar/tinycast/%s\n```\n' "$CASK"
     # The stable DMG is arm64-only; macOS 26 is the last release that boots on Intel.
     if [ "$CHANNEL" = "stable" ]; then
-        printf '%s\n' "On an **Intel** Mac, install \`abue-ammar/tinycast/tinycast-universal\` instead — same app, built with both slices."
+        printf '%s\n\n' "On an **Intel** Mac, download \`Tinycast-Universal-${VERSION}.dmg\` instead — same app, built with both slices."
     fi
-    printf '%s\n' "This build is self-signed. If you download the DMG directly instead of using Homebrew, macOS will refuse to open it until you clear the quarantine flag once:"
+    printf '%s\n' "This build is self-signed. macOS will refuse to open it until you clear the quarantine flag once:"
     printf '```sh\nxattr -dr com.apple.quarantine "/Applications/%s.app"\n```\n' "$DISPLAY_NAME"
 } > "$BODY_OUT"
 

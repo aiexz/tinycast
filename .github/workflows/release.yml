@@ -48,18 +48,16 @@ jobs:
         run: |
           CHANNEL="${{ github.event.inputs.channel }}"
           BASE_VERSION="${{ github.event.inputs.version }}"
-          # Each channel is a distinct, side-by-side app: its own display name + bundle id,
-          # and its own Homebrew cask in the abue-ammar/homebrew-tinycast tap.
+          # Each channel is a distinct, side-by-side app: its own display name + bundle id.
           case "$CHANNEL" in
-            beta)   SUFFIX="-beta.${GITHUB_RUN_NUMBER}";  DISPLAY="Tinycast Beta";  BUNDLE="com.tinycast.app.beta";  CASK="tinycast@beta";  PRERELEASE=true ;;
-            stable) SUFFIX="";                            DISPLAY="Tinycast";       BUNDLE="com.tinycast.app";       CASK="tinycast";       PRERELEASE=false ;;
+            beta)   SUFFIX="-beta.${GITHUB_RUN_NUMBER}";  DISPLAY="Tinycast Beta";  BUNDLE="com.tinycast.app.beta";  PRERELEASE=true ;;
+            stable) SUFFIX="";                            DISPLAY="Tinycast";       BUNDLE="com.tinycast.app";       PRERELEASE=false ;;
           esac
           FULL="${BASE_VERSION}${SUFFIX}"
           {
             echo "full_version=${FULL}"
             echo "display_name=${DISPLAY}"
             echo "bundle_id=${BUNDLE}"
-            echo "cask_name=${CASK}"
             echo "dmg_file=Tinycast-${FULL}.dmg"
             echo "zip_file=Tinycast-${FULL}.zip"
             echo "prerelease=${PRERELEASE}"
@@ -128,7 +126,7 @@ jobs:
           DISPLAY_NAME: ${{ steps.meta.outputs.display_name }}
         run: ./Scripts/verify-signature.sh "$RUNNER_TEMP/DerivedData/Build/Products/Release/${DISPLAY_NAME}.app"
 
-      # Two artifacts from one build: the DMG people download and the cask installs, and the zip
+      # Two artifacts from one build: the DMG people download directly, and the zip
       # the in-app updater installs — it expands with `ditto` instead of mounting a volume.
       - name: Package DMG and ZIP
         env:
@@ -163,7 +161,6 @@ jobs:
           VERSION: ${{ steps.meta.outputs.full_version }}
           DISPLAY_NAME: ${{ steps.meta.outputs.display_name }}
           BUNDLE_ID: ${{ steps.meta.outputs.bundle_id }}
-          CASK: ${{ steps.meta.outputs.cask_name }}
         run: ./Scripts/release-notes.sh "$RUNNER_TEMP/notes.md" "$RUNNER_TEMP/changelog.md"
 
       - name: Publish GitHub Release
@@ -184,39 +181,8 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md" \
             $PRERELEASE_FLAG
 
-      - name: Update Homebrew cask
-        env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          CASK: ${{ steps.meta.outputs.cask_name }}
-          VERSION: ${{ steps.meta.outputs.full_version }}
-          DMG_FILE: ${{ steps.meta.outputs.dmg_file }}
-        run: |
-          if [ -z "${TAP_TOKEN}" ]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN secret not set — skipping cask bump. Add it to enable auto-updates of the tap."
-            exit 0
-          fi
-          SHA="$(shasum -a 256 "dist/${DMG_FILE}" | awk '{print $1}')"
-          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/abue-ammar/homebrew-tinycast.git" tap
-          CASK_FILE="tap/Casks/${CASK}.rb"
-          if [ ! -f "$CASK_FILE" ]; then
-            echo "::error::$CASK_FILE not found in tap."
-            exit 1
-          fi
-          sed -i '' -E "s|^  version \".*\"|  version \"${VERSION}\"|" "$CASK_FILE"
-          sed -i '' -E "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" "$CASK_FILE"
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "Casks/${CASK}.rb"
-          if git diff --cached --quiet; then
-            echo "No cask changes to commit."
-          else
-            git commit -m "${CASK} ${VERSION}"
-            git push
-          fi
-
       # Announce the release in the Discord release channel. A Components V2 (flags 32768) card:
-      # channel-tinted container, title + right-aligned Download button, changelog, Homebrew block.
+      # channel-tinted container, title + right-aligned Download button, changelog.
       # No-ops with a warning if the webhook secret isn't set.
       - name: Announce on Discord
         if: success()
@@ -225,7 +191,6 @@ jobs:
           CHANNEL: ${{ github.event.inputs.channel }}
           DISPLAY_NAME: ${{ steps.meta.outputs.display_name }}
           VERSION: ${{ steps.meta.outputs.full_version }}
-          CASK: ${{ steps.meta.outputs.cask_name }}
           TAG: v${{ steps.meta.outputs.full_version }}
         run: |
           if [ -z "${DISCORD_WEBHOOK_URL}" ]; then
@@ -234,7 +199,6 @@ jobs:
           fi
           if [ "${CHANNEL}" = "stable" ]; then COLOR=3066993; else COLOR=15844367; fi
           RELEASE_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}"
-          INSTALL="brew install --cask abue-ammar/tinycast/${CASK}"
           # Build with jq so backticks stay literal (printf in single quotes escaped them,
           # which Discord rendered as verbatim backticks instead of a code block).
           # Components V2 forbids a top-level `content`, so @everyone is a text component, and
@@ -243,7 +207,6 @@ jobs:
             --argjson color "${COLOR}" \
             --arg heading "## 🚀 ${DISPLAY_NAME} ${VERSION}" \
             --arg sub "Now available on the **${CHANNEL}** channel." \
-            --arg install "${INSTALL}" \
             --arg url "${RELEASE_URL}" \
             --rawfile changelog "${RUNNER_TEMP}/changelog.md" \
             '{
@@ -257,17 +220,15 @@ jobs:
                     accessory: { type: 2, style: 5, label: "Download", url: $url }
                   },
                   { type: 14 },
-                  { type: 10, content: ($changelog | rtrimstr("\n")) },
-                  { type: 14 },
-                  { type: 10, content: ("**Install / update via Homebrew**\n```\n" + $install + "\n```") }
+                  { type: 10, content: ($changelog | rtrimstr("\n")) }
                 ] }
               ]
             }' > payload.json
           curl -fsS -X POST -H "Content-Type: application/json" -d @payload.json \
             "${DISCORD_WEBHOOK_URL}?with_components=true"
 
-  # macOS 26 is the last release to boot on Intel, so stable also ships a universal build under its
-  # own cask. Same tag, version, bundle id and signature — only the slices and filenames differ, so
+  # macOS 26 is the last release to boot on Intel, so stable also ships a universal build.
+  # Same tag, version, bundle id and signature — only the slices and filenames differ, so
   # nothing here can change what the Apple silicon job above publishes.
   universal:
     needs: build
@@ -277,7 +238,6 @@ jobs:
       VERSION: ${{ needs.build.outputs.full_version }}
       DISPLAY_NAME: ${{ needs.build.outputs.display_name }}
       BUNDLE_ID: ${{ needs.build.outputs.bundle_id }}
-      CASK: tinycast-universal
     steps:
       - uses: actions/checkout@v7
 
@@ -384,30 +344,3 @@ jobs:
             "dist/Tinycast-Universal-${VERSION}.dmg" \
             "dist/Tinycast-Universal-${VERSION}.zip"
 
-      - name: Update Homebrew cask
-        env:
-          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        run: |
-          if [ -z "${TAP_TOKEN}" ]; then
-            echo "::warning::HOMEBREW_TAP_TOKEN secret not set — skipping cask bump."
-            exit 0
-          fi
-          SHA="$(shasum -a 256 "dist/Tinycast-Universal-${VERSION}.dmg" | awk '{print $1}')"
-          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/abue-ammar/homebrew-tinycast.git" tap
-          CASK_FILE="tap/Casks/${CASK}.rb"
-          if [ ! -f "$CASK_FILE" ]; then
-            echo "::error::$CASK_FILE not found in tap."
-            exit 1
-          fi
-          sed -i '' -E "s|^  version \".*\"|  version \"${VERSION}\"|" "$CASK_FILE"
-          sed -i '' -E "s|^  sha256 \".*\"|  sha256 \"${SHA}\"|" "$CASK_FILE"
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add "Casks/${CASK}.rb"
-          if git diff --cached --quiet; then
-            echo "No cask changes to commit."
-          else
-            git commit -m "${CASK} ${VERSION}"
-            git push
-          fi

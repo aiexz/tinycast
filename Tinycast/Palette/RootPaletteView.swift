@@ -196,16 +196,14 @@ struct RootPaletteView: View {
                     title: "Changelog",
                     systemImage: "clock.arrow.trianglehead.2.counterclockwise.rotate.90"
                 ) {
-                    if let url = URL(string: "https://github.com/abue-ammar/tinycast/releases") {
+                    if let url = URL(string: "https://github.com/aiexz/tinycast/releases") {
                         openURL(url)
                     }
                 },
                 PopoverMenuItem(title: "About Tinycast", systemImage: "info.circle") {
                     core.settingsCoordinator.showAbout()
                 },
-                PopoverMenuItem(title: "Support Tinycast", systemImage: "heart") {
-                    core.supportCoordinator.showSupport()
-                },
+
                 PopoverMenuItem(title: "Settings", systemImage: "gearshape", shortcut: "⌘,") {
                     core.settingsCoordinator.showSettings()
                 },

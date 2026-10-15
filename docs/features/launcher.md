@@ -157,7 +157,7 @@ the Zed app: rule 3 only protects an exact title past three characters.
 
 `settings` is the case these were measured against. Apple declares `Settings` in System Settings'
 `CFBundleAlternateNames`, so it is an exact alternate title and wins rule 3; the command is named
-`Tinycast Settings`, like About, Quit and Support Tinycast, so nothing ties it there.
+`Tinycast Settings`, like About and Quit Tinycast, so nothing ties it there.
 
 ## One fold, everywhere
 

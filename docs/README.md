@@ -12,7 +12,7 @@ contradicts the code is a defect, so fix it in the commit that made it wrong.
 | [standards.md](standards.md) | How code here is written: posture, naming, style, concurrency, performance budgets, comments | a convention changes, or a check is added |
 | [testing.md](testing.md) | How to verify a change: the definition of done, the harnesses, purity checks, budgets, the manual sweep | a harness moves, or a budget changes |
 | [development.md](development.md) | The local loop: setup, build, dev channel, editor, format/lint, generated data | the local toolchain changes |
-| [release.md](release.md) | How a build reaches a user: packaging, PR review, releases, the Homebrew tap | the pipeline changes |
+| [release.md](release.md) | How a build reaches a user: packaging, PR review, releases | the pipeline changes |
 | [signing.md](signing.md) | The self-signed identity and the two CI secrets | the signing setup changes |
 | [ui.md](ui.md) | The design system: tokens, panel chrome, row grammar, glass, dialogs and HUDs | a token or a presentation rule changes |
 
@@ -49,8 +49,7 @@ open with an `## Invariants` section; read it before changing anything in that a
 [settings file](features/settings-file.md) ·
 [Raycast import](features/raycast-import.md) ·
 [Raycast extensions](features/extensions.md) ·
-[updates](features/updates.md) ·
-[support](features/support.md)
+[updates](features/updates.md)
 
 ## Contributing
 

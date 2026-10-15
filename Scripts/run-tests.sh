@@ -569,7 +569,7 @@ run settings-history-test  Tinycast/Features/Settings/SettingsTab.swift \
                            $L/SearchRelevance.swift
 run updates-test           Tinycast/Features/Updates/Model/*.swift \
                            Tinycast/Features/Updates/Service/BundleSignature.swift
-run support-test           Tinycast/Features/Support/Model/*.swift
+
 run ai-provider-test       Tinycast/Features/Settings/AppSettingsKey.swift \
                            Tinycast/Features/AI/Model/*.swift \
                            Tinycast/Features/AI/Settings/AISettingsStore.swift

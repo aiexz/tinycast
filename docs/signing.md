@@ -4,8 +4,8 @@ Tinycast is signed with a **stable self-signed identity** called `Tinycast Self-
 _same_ identity on every build is what makes macOS remember the Accessibility permission across
 rebuilds and updates — ad-hoc signing changes every build and macOS forgets the grant.
 
-An Apple Developer ID certificate now exists, but nothing is signed with it yet. Why that switch is
-staged rather than immediate is [below](#the-developer-id-migration).
+The fork uses its existing CI identity. The updater accepts only an intact bundle signed with the
+same leaf certificate as the running app; it does not trust the original project's Developer ID team.
 
 You create this identity **once**. The same identity is used for:
 
@@ -66,15 +66,15 @@ Then set the two secrets on the repo (via `gh`, authed as the repo owner, or pas
 UI under **Settings → Secrets and variables → Actions**):
 
 ```sh
-gh secret set SIGNING_P12_BASE64   --repo abue-ammar/tinycast < /tmp/signing.p12.base64
-gh secret set SIGNING_P12_PASSWORD --repo abue-ammar/tinycast --body "$P12_PASSWORD"
+gh secret set SIGNING_P12_BASE64   --repo aiexz/tinycast < /tmp/signing.p12.base64
+gh secret set SIGNING_P12_PASSWORD --repo aiexz/tinycast --body "$P12_PASSWORD"
 rm -f /tmp/signing.p12.base64   # holds your private key — delete it
 ```
 
 If you ever lose the secrets, just re-run this section — as long as the `Tinycast Self-Signed`
 identity is still in your keychain, the exported identity is the same, so users are unaffected. If you
-lose the identity entirely, recreate it (step 1) and re-do this; existing users will re-grant
-Accessibility once on their next update, then it's stable again.
+lose the identity entirely, a newly generated certificate cannot authenticate an update to existing
+copies. Users must install that build manually and re-grant Accessibility.
 
 ## Hardened runtime
 
@@ -113,30 +113,20 @@ entitlement for every usage string `Info.plist` declares. Both release jobs run 
 a nested binary missing the runtime flag is the most common notarization rejection, and a usage string
 missing its entitlement ships a permission that can never be granted.
 
-## The Developer ID migration
+## Certificate continuity
 
-`BundleSignature` already accepts a bundle signed by the Tinycast team under Apple's Developer ID
-chain, even though releases are still signed with `Tinycast Self-Signed`. That is deliberate and
-staged: the updater compares signatures before it installs, so the code that trusts the new identity
-has to reach users *before* the first build carrying it. Until the switch it also accepts the running
-app's own leaf, which is the only thing a copy installed earlier knows how to check.
+Keep the existing `SIGNING_P12_BASE64` and `SIGNING_P12_PASSWORD` secrets for every release. Both
+architecture jobs import them and sign with `Tinycast Self-Signed`. The certificate's display name
+is not its identity: generating another certificate with the same name does not preserve update trust.
 
-The requirement pins the team rather than the certificate, so a Developer ID renewal strands nobody.
-It deliberately omits the `notarized` keyword — that resolves a ticket through `syspolicyd` or the
-network, and the updater verifies in a cache directory Gatekeeper has never assessed, so an offline
-Mac would refuse a bundle the chain already proves is ours.
-
-**The Developer ID identity stays a CI-only fact.** When the switch happens it is named on the
-release workflow's `xcodebuild` line and nowhere else: `project.yml` keeps signing with
-`Tinycast Self-Signed`, so a contributor keeps building with the one they created in §1 — same name,
-their own key, never shared. Nothing about local development changes.
-
-**Keep `Tinycast Self-Signed` in the login keychain after the switch.** It is the only way to ship a
-build that a copy predating the migration could still install.
+`BundleSignature` verifies the bundle seal, including nested code and every architecture, then compares
+its leaf certificate byte-for-byte with the running app's certificate. Unsigned and ad-hoc-signed
+builds cannot authenticate updates. A future certificate change needs an explicit signing transition;
+do not rotate this identity as routine release maintenance.
 
 ## Quarantine (separate from signing)
 
 macOS quarantines anything downloaded from the internet, and Gatekeeper blocks even a correctly
-self-signed app with an "unverified developer" warning. The Homebrew cask runs
-`xattr -dr com.apple.quarantine` in `postflight`, so **brew users never touch it**. People who
-download the DMG directly clear it once by hand.
+self-signed app with an "unverified developer" warning. After installing a directly downloaded DMG,
+clear quarantine once with `xattr -dr com.apple.quarantine "/Applications/Tinycast.app"` (or
+`Tinycast Beta.app` for beta). Subsequent in-app updates are fetched without quarantine.

@@ -1,16 +1,12 @@
 # Updates
 
-Tinycast checks GitHub Releases once a day, offers the newest release for its own channel in a native
-window with its release notes, installs it and relaunches. There is no Sparkle and no appcast: the
-release feed the website already reads is the feed the app reads.
+Tinycast checks `aiexz/tinycast` GitHub Releases once a day, offers the newest release for its own
+channel in a native window with its release notes, installs it and relaunches. There is no Sparkle
+and no appcast; this fork does not check the original repository's releases.
 
 ## Invariants
-
-- **Tinycast installs its own updates, and Homebrew stays out of the way.** Both casks declare
-  `auto_updates true`, which is Homebrew's own flag for an app that manages its own version. `brew
-  update && brew upgrade` therefore skips Tinycast entirely — it is never reported outdated, never
-  re-downloaded, and a self-updated copy is never trashed or rolled back. `brew install`, `brew
-  uninstall` and `brew list` keep working unchanged.
+- **Tinycast installs its own updates directly.** The app checks GitHub Releases, downloads the
+  matching release zip, validates its signature, replaces itself in `/Applications`, and relaunches.
 - **The archive is a zip, never the DMG.** A zip expands with `ditto`; a DMG would have to be mounted,
   which means a volume, a Spotlight handle and a detach that can fail. A release published without a
   zip is not installable and is not offered.
@@ -23,12 +19,11 @@ release feed the website already reads is the feed the app reads.
   Tinycast is neither. `Quarantine` checks anyway through `getxattr`/`removexattr` rather than the
   `xattr` tool, and an app that still carries the flag is refused rather than installed.
 - **The signature is the only integrity guarantee.** A downloaded bundle is trusted when its seal
-  validates, nested helper included, *and* it either satisfies the Developer ID requirement pinned in
-  `BundleSignature` or carries the byte-identical leaf certificate the running app does. The
-  requirement names the team, so a certificate renewal strands nobody; the leaf match is the path a
-  copy installed before the Developer ID switch has, and it goes away once none is left. `notarized`
-  is deliberately not in the requirement — it resolves the ticket through `syspolicyd` or the
-  network, so an offline Mac would refuse a bundle the chain already proves is ours.
+  validates, nested helper included, *and* it carries the byte-identical leaf certificate the running
+  app does. Upstream Developer ID team trust is removed; only the exact running signing certificate
+  with an intact nested seal is accepted. `notarized` is deliberately not in the requirement — it
+  resolves the ticket through `syspolicyd` or the network, so an offline Mac would refuse a bundle the
+  chain already proves is ours.
 - **A build only ever updates within its own channel.** The channels are separate bundle ids installed
   side by side; crossing would mean installing a different app. `com.tinycast.app.dev` never updates
   at all, and does not advertise the command.
@@ -51,8 +46,8 @@ release feed the website already reads is the feed the app reads.
 - **The window shows the changelog and nothing else.** CI writes install instructions below
   `<!-- tinycast:install -->`, and `ReleaseNotes.summary` — the single reader of that marker, called
   where the feed is parsed so the cache holds the cut text too — drops them. An app that installs its
-  own updates has no use for a Homebrew command, and a body published before the marker existed has
-  none, so it comes back whole.
+  own updates has no use for manual install or quarantine instructions, and a body published before the
+  marker existed has none, so it comes back whole.
 - **The notes are laid out by `ReleaseNotesView`, which is this feature's own.** `AttributedString`
   parses inline styling only; headings and bullets are placed by hand or they arrive as literal `##`
   and `*`. `ExtensionMarkdownView` does the same job and is deliberately not reused — an extension's
@@ -87,10 +82,11 @@ identity changes.
 self-rescheduling pump, and one atomic JSON file.
 
 ```text
-~/Library/Caches/<bundle-id>/update-check.json
+~/Library/Caches/<bundle-id>/update-check-aiexz-tinycast.json
 ```
 
-It holds `lastCheckedAt`, the newest release seen, and the version the user dismissed. Freshness is
+The filename includes the release repository, so a changed feed cannot offer an old feed's cached
+release. It holds `lastCheckedAt`, the newest release seen, and the version the user dismissed. Freshness is
 measured from `lastCheckedAt`, so relaunching never re-asks GitHub; the interval is 24 h, dropping to
 2 h after a failed attempt, and the first check waits 30 s so it never lands in the login rush. The
 request carries a `User-Agent`, which the GitHub API rejects requests without.
@@ -108,7 +104,7 @@ One route, whatever the install came from:
    for its channel, so it is `Tinycast Beta.app` on beta.
 3. Check quarantine natively; clear it if somehow present, and refuse the update if it survives.
 4. Verify the bundle id, the version, and that the code signature is valid and proves the bundle is
-   ours — by the pinned Developer ID requirement, or by the running app's own leaf certificate.
+   ours — by matching the running app's own leaf certificate with an intact nested seal.
 5. `FileManager.replaceItemAt`. The staging folder is on the same volume as `/Applications`, which is
    what lets this be atomic. A non-writable `/Applications` is reported, not worked around; there is
    no privileged helper.
@@ -116,12 +112,12 @@ One route, whatever the install came from:
    `open` on a bundle id that is still running would only re-activate the instance on its way out.
 
 Nothing here touches `~/Library/Preferences`, `~/Library/Caches` or `Application Support`, so no
-setting, clipboard entry, note or snippet is affected by an update, by `brew upgrade`, or by both.
+setting, clipboard entry, note or snippet is affected by an update.
 
 ## Releasing into it
 
 `.github/workflows/release.yml` publishes two assets from one build: the DMG people download by hand
-and the cask installs, and `Tinycast-<version>.zip` for the updater. A stable run adds a
+and `Tinycast-<version>.zip` for the updater. A stable run adds a
 `Tinycast-Universal-<version>` pair from its `universal` job, uploaded second so the thin zip stays
 first in the asset list — builds predating architecture-aware selection take whichever comes first.
 The zip is made with
@@ -136,7 +132,3 @@ breaks the seal, and the signature check above would then reject every update.
 The body it publishes is composed by `Scripts/release-notes.sh`: GitHub's generated changelog first,
 then `<!-- tinycast:install -->`, then the install text. Anything a release wants the update window to
 show has to go above that marker — see [release.md](../release.md#release-notes).
-
-**The casks must declare `auto_updates true`** in `abue-ammar/homebrew-tinycast`. Without it Homebrew
-compares its Caskroom receipt against the cask version, sees a self-updated app as outdated forever,
-and re-installs over it on the next `brew upgrade`.
