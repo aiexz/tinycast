@@ -1,6 +1,9 @@
 import { site } from "../data/site";
+import { supportHero } from "../data/support";
+import { reveal } from "../lib/reveal";
 import { Button } from "./ui/button";
 import { GitHubLogo, Logo, SupportIcon } from "./ui/icon";
+import { RevealWords } from "./ui/reveal-words";
 
 // The mark alone on a violet glow, so the page ends on the brand.
 function GlowingMark() {
@@ -18,20 +21,28 @@ function GlowingMark() {
 export function Support() {
   return (
     <section id="support" className="px-4 pb-24 pt-24 text-center sm:px-10 ">
-      <div aria-hidden="true">
+      <div aria-hidden="true" {...reveal("content")}>
         <GlowingMark />
       </div>
-      <h2 className="mx-auto mt-14 max-w-2xl text-closing">
-        Enjoying Tinycast?
+      <h2
+        className="mx-auto mt-14 max-w-2xl text-closing"
+        {...reveal("words", 1)}
+      >
+        <RevealWords text={supportHero.title} />
       </h2>
-      <p className="mx-auto mt-4 max-w-lg text-pretty text-body-lg text-fg-muted">
-        Tinycast is free and open source, and it stays that way. If you would
-        like to support its development, you can chip in. Entirely optional.
+      <p
+        className="mx-auto mt-4 max-w-lg text-pretty text-body-lg text-fg-muted"
+        {...reveal("text", 2)}
+      >
+        {supportHero.intro}
       </p>
-      <div className="mt-8 flex flex-wrap justify-center gap-3">
+      <div
+        className="mt-8 flex flex-wrap justify-center gap-3"
+        {...reveal("content", 3)}
+      >
         <Button href={site.support} size="lg">
           <SupportIcon size={18} />
-          Support development
+          Support Tinycast
         </Button>
         <Button href={site.repo} variant="ghost" size="lg">
           <GitHubLogo size={16} />

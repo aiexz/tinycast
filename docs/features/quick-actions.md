@@ -151,6 +151,12 @@ nothing on every route, and a 3B model is markedly worse at it. `NLLanguageRecog
 source language, because `TranslationSession(installedSource:target:)` needs a concrete one and
 `LanguageAvailability` reports only a status.
 
+**A download is a locale, not a language.** Apple matches `en-US` and `en-GB` separately, so the bare
+`en` the recognizer reports finds only the first and calls an installed `en-GB` pair missing — which
+read as *Chinese hasn't been downloaded yet* on a Mac that had Chinese. Both sides are retried across
+every supported spelling of the same script before the panel names a language, and the language it
+names is the one with no downloaded asset of its own.
+
 `TranslationError` is annotated `macOS 26.4` while the deployment floor is `26.0`, so failures are
 caught as plain `Error` and reported by what was asked rather than by matching its cases.
 
@@ -184,9 +190,10 @@ which is a closed two-case enum measured once at present time — a growing stre
 Non-activating, so the target app keeps its selection while the panel holds key. Keys go through
 `sendEvent`: `↵` replaces, `⌘C` copies, `esc` dismisses; click-away dismisses like every other
 borderless surface. The panel is anchored by its **top-left** and re-measured as the reply arrives —
-centring on every measure would walk it up the screen. Summarize uses chat's `ChatMarkdownText` and
-`MarkdownBlock.parse`, keeping its whole result selectable across paragraphs and headings, with the
-same math as chat; `midStream` is on while it runs, so an equation still arriving is held back.
+centring on every measure would walk it up the screen. Summarize and custom actions use chat's
+`ChatMarkdownText` and `MarkdownBlock.parse`, keeping the whole result selectable across paragraphs
+and headings, with the same math as chat; `midStream` is on while it runs, so an equation still
+arriving is held back.
 
 The body is a `ScrollView` with its height **set** rather than capped: a scroll view has no ideal
 height, so `NSHostingView.fittingSize` measures it as nothing and the body collapses to a slot. The
@@ -222,7 +229,10 @@ first, because Chromium builds its accessibility tree only once something asks a
 apps and VS Code otherwise answer every attribute with nothing.
 
 When Accessibility yields nothing, `TextInjector.copySelection` borrows a ⌘C: snapshot the
-pasteboard, synthesise the chord, wait for `changeCount` to **move**, read, restore. It lives on
+pasteboard, pause clipboard history, synthesise the chord, wait for `changeCount` to **move**, read,
+restore, resume. The pause keeps the borrowed copy out of history. Only one borrow runs at a time:
+a second would snapshot the first one's copy and read its restore as a selection, so it returns
+nothing instead. It lives on
 `TextInjector` because the pasteboard has one owner — the same lease, queue and `ClipboardManager`
 coordination a paste needs, and a second owner would race it.
 
@@ -234,6 +244,10 @@ false-positives when the same text was already on the clipboard.
 Copying is the fallback and never the first try: it synthesises a keystroke into somebody else's app.
 When both tiers come back empty, only an Accessibility result of `.empty` justifies "nothing is
 selected"; otherwise the app told us nothing either way and says so.
+
+Quicklinks and snippets read `{selection}` through the same two tiers, with one rule of their own:
+the ⌘C is sent only when the expanded template reads the selection. A snippet's keyword expansion
+never sends one, since a typed keyword leaves nothing selected.
 
 ## Delivery
 
@@ -290,7 +304,11 @@ failure handler, so automatic expansion stays silent as before.
   `quickActionModelOverrides`.
 - Translate into a language that has not been downloaded: the panel names the language, and its
   button closes the panel and opens Language & Region.
+- Download English (UK) alone, with English (US) absent, and translate English text: the panel must
+  translate rather than call the target language missing.
+- Translate Korean text with Korean not downloaded and the target language installed: the panel names
+  Korean, the language that is actually missing.
 - Revoke Accessibility while enabled: a HUD explains instead of failing silently.
 - Harnesses: `quick-action-test` (action metadata, prompt boundaries, preview choices, routes and
-  their repair, diffs) and
-  `text-diff-test` (exact chunks, Unicode, ties, token boundaries and fast paths).
+  their repair) and
+  `text-diff-test` (exact chunks, coalescing, Unicode, ties, token boundaries and fast paths).

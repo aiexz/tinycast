@@ -9,7 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        AppCore.shared.start()
+        AppCore.shared.start(launchedByUser: isUserLaunch)
     }
 
     func application(_ application: NSApplication, open urls: [URL]) {
@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !terminationRequestInFlight else { return .terminateLater }
         terminationRequestInFlight = true
         Task { @MainActor [weak self] in
+            await AppCore.shared.stopDictationForTermination()
             // A 300 ms-debounced draft still has to reach disk, but it can no longer veto the quit.
             await AppCore.shared.flushNotesForTermination()
             self?.terminationRequestInFlight = false
@@ -58,5 +59,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let pid = event.attributeDescriptor(forKeyword: keySenderPIDAttr)?.int32Value
         else { return false }
         return NSRunningApplication(processIdentifier: pid)?.bundleIdentifier == "com.apple.dock"
+    }
+
+    /// Only a plain open counts; a login item or a URL open launches with nothing to show.
+    private var isUserLaunch: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+            event.eventClass == kCoreEventClass, event.eventID == kAEOpenApplication
+        else { return false }
+        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue
+            != keyAELaunchedAsLogInItem
     }
 }

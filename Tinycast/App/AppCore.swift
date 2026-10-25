@@ -25,7 +25,12 @@ final class AppCore: HealthCheckable {
         syntheticEventTag: Paster.tinycastEventTag)
     let textInjector: TextInjector
     let hotKeys = HotKeyManager()
-    let hyperKeyTap = HyperKeyTap()
+    let dictationAudioDucker = DictationAudioDucker()
+    @ObservationIgnored private(set) lazy var dictationModels =
+        DictationModelStore(idleRelease: settings.dictationIdleRelease)
+    @ObservationIgnored private(set) lazy var hyperKey = HyperKeyManager(
+        settings: settings, hotKeys: hotKeys)
+    @ObservationIgnored private lazy var dictationKey = DictationKeyManager(hotKeys: hotKeys)
     let windowMover = WindowMover()
     let spaceSwitcher = SpaceSwitcher()
     let instantSpaceSwipeMonitor: InstantSpaceSwipeMonitor
@@ -33,6 +38,8 @@ final class AppCore: HealthCheckable {
     let settings: AppSettings
     /// Mirrors settings into settings.json; nil while the Backup pane's switch is off.
     @ObservationIgnored private var settingsFile: SettingsFileRepository?
+    /// The file's launcher items, kept to apply a waiting record once its app is installed.
+    @ObservationIgnored private var launcherSettingsFile: LauncherSettingsFile?
     @ObservationIgnored private var appearanceObservation: NSKeyValueObservation?
     @ObservationIgnored private var instantSpaceSwipeFailureReported = false
     @ObservationIgnored private var instantSpaceSwipeHealthSubscribed = false
@@ -54,7 +61,8 @@ final class AppCore: HealthCheckable {
     let pinnedEmoji = PinnedEmojiStore()
     let runningApps = RunningAppsMonitor()
     let palette = PaletteState()
-    let fileSearch = FileSearchSession()
+    let fileIndexer = FileIndexer()
+    @ObservationIgnored private(set) lazy var fileSearch = FileSearchSession(index: fileIndexer.index)
     let dictionary = DictionarySession()
     let menuSearch = MenuSearchSession()
     let windowSwitch = WindowSwitchSession()
@@ -76,25 +84,37 @@ final class AppCore: HealthCheckable {
     let installedAI = InstalledAIManager()
     @ObservationIgnored private var appliedLaunchRevisions: [InstalledAIKind: Int] = [:]
 
-    /// Set when a quicklink editor should open with Settings; the pane consumes it.
-    var pendingQuicklinkEdit: QuicklinkEditRequest?
-    /// Set when a snippet editor should open with Settings; the pane consumes it.
-    var pendingSnippetEdit: SnippetEditRequest?
     /// Set when a layout editor should open with Settings; the pane consumes it.
     var pendingWindowLayoutEdit: WindowLayoutEditRequest?
+    var pendingExtensionStoreInstall: ExtensionDeepLink.StoreInstall?
 
     @ObservationIgnored private(set) lazy var snippetCoordinator = SnippetCoordinator(
         store: snippetsStore, listener: snippetListener, injector: textInjector,
         clipboardStore: clipboardStore, appIndex: appIndex, settings: settings,
         windowController: windowController, paletteCoordinator: paletteCoordinator,
-        settingsCoordinator: settingsCoordinator,
-        showMessage: { [unowned self] in self.showMessage($0) }, core: self)
+        palette: palette,
+        showMessage: { [unowned self] in self.showMessage($0, tone: $1) }, core: self)
+    @ObservationIgnored private(set) lazy var dictationCoordinator = DictationCoordinator(
+        settings: settings, hotKeys: hotKeys, models: dictationModels, injector: textInjector,
+        audioDucker: dictationAudioDucker,
+        confirmEnable: { [unowned self] in
+            await self.confirm(
+                title: String(localized: "Enable Dictation?"),
+                message: String(
+                    localized: """
+                        Tinycast needs microphone access for dictation and Accessibility to paste into \
+                        other apps. Audio is processed on this Mac.
+                        """),
+                symbol: "waveform", confirmTitle: String(localized: "Continue"), tone: .neutral,
+                confirmRole: .standard)
+        },
+        showMessage: { [unowned self] in self.showMessage($0, tone: $1) })
     @ObservationIgnored private(set) lazy var quicklinkCoordinator = QuicklinkCoordinator(
         store: quicklinks, settings: settings,
         appIndex: appIndex, injector: textInjector, hotKeys: hotKeys, favorites: favorites,
         visibility: visibility, ranking: launcherRanking, aliases: aliases,
         windowController: windowController,
-        paletteCoordinator: paletteCoordinator, settingsCoordinator: settingsCoordinator,
+        paletteCoordinator: paletteCoordinator,
         clipboardHistory: { [unowned self] in self.snippetCoordinator.clipboardHistoryForExpansion() },
         core: self)
 
@@ -187,8 +207,9 @@ final class AppCore: HealthCheckable {
         store: calendarStore, clock: meetingClock, appIndex: appIndex, settings: settings,
         paletteCoordinator: paletteCoordinator, core: self)
     @ObservationIgnored private(set) lazy var fileSearchCoordinator = FileSearchCoordinator(
-        settings: settings, appIndex: appIndex, session: fileSearch, palette: palette,
-        paletteCoordinator: paletteCoordinator, windowController: windowController, core: self)
+        settings: settings, appIndex: appIndex, session: fileSearch, indexer: fileIndexer,
+        palette: palette, paletteCoordinator: paletteCoordinator,
+        windowController: windowController, core: self)
     @ObservationIgnored private(set) lazy var menuSearchCoordinator = MenuSearchCoordinator(
         settings: settings, appIndex: appIndex, session: menuSearch, palette: palette,
         paletteCoordinator: paletteCoordinator, core: self)
@@ -220,7 +241,6 @@ final class AppCore: HealthCheckable {
     @ObservationIgnored private lazy var messageHUD = MessageHUDController(settings: settings)
     private(set) var isShowingDialog = false
     var isDimmingPaletteForDialog: Bool { isShowingDialog && windowController.isVisible }
-    /// Every confirmation, report and prompt; it also stops a held hotkey stacking them.
     @ObservationIgnored private lazy var dialogs = DialogController(
         settings: settings,
         onPresentationChanged: { [weak self] isPresenting in
@@ -241,6 +261,9 @@ final class AppCore: HealthCheckable {
         }
         applyInstantSpaceSwipeLifecycle()
     }
+    /// Resolved once by AppKit, so it is what this process shows until it relaunches.
+    private let launchLocalization = Bundle.main.preferredLocalizations.first
+    private var relaunchRequested = false
 
     private init() {
         let launcherRanking = LauncherRankingStore()
@@ -268,15 +291,17 @@ final class AppCore: HealthCheckable {
             saveSelection: { UserDefaults.standard.set($0?.rawValue, forKey: noteSelectionKey) })
     }
 
-    func start() {
+    func start(launchedByUser: Bool) {
         Signposts.interval("AppCore.start") {
             // Shorten AppKit's ~2–3s tooltip delay; registration domain, so a user default wins.
             UserDefaults.standard.register(defaults: ["NSInitialToolTipDelay": 250])
             NSApp.setActivationPolicy(.accessory)
+            dictationAudioDucker.recover()
             applyAppearance()
+            applyMotion()
             observeEffectiveAppearance()
             pinnedEmoji.onPersistenceFailure = { [weak self] in
-                self?.showMessage("Couldn't save Emoji & Symbols pins", tone: .danger)
+                self?.showMessage(String(localized: "Couldn't save Emoji & Symbols pins"), tone: .danger)
             }
 
             appIndex.start(settings: settings)
@@ -337,18 +362,23 @@ final class AppCore: HealthCheckable {
             updateCoordinator.applyEnabled()
             calendarCoordinator.applyEnabled()
             Task { await appIndex.refresh() }
-            Task { await emojiIndex.load(languages: Locale.preferredLanguages) }
+            Task { await emojiIndex.load(languages: SystemLanguages.preferred) }
             currencyRates.start()
             updateChecker.onUpdateAvailable = { [weak self] release in
                 self?.updateCoordinator.presentIfAvailable(release) ?? true
             }
-            updateChecker.start()
+            updateCoordinator.applyAutomaticChecking()
 
-            hyperKeyTap.healthTicker = healthTicker
+            hyperKey.healthTicker = healthTicker
             hotKeys.modifierTapMonitor.healthTicker = healthTicker
             snippetListener.healthTicker = healthTicker
 
             hotKeys.onTogglePalette = { [weak self] in self?.paletteCoordinator.togglePalette() }
+            hotKeys.dictationEnabled = settings.dictationEnabled
+            hotKeys.dictationHoldToTalk = settings.dictationMode == .pushToTalk
+            hotKeys.onDictationPressed = { [weak self] in self?.dictationCoordinator.pressed() }
+            hotKeys.onDictationReleased = { [weak self] in self?.dictationCoordinator.released() }
+            hotKeys.onDictationCancelled = { [weak self] in self?.dictationCoordinator.cancel() }
             hotKeys.onRunCommand = { [weak self] id in self?.launcherCoordinator.runCommand(id) }
             hotKeys.onRunCustomCommand = { [weak self] id in
                 self?.customCommandCoordinator.runCustomCommand(id: id)
@@ -367,7 +397,7 @@ final class AppCore: HealthCheckable {
                 self?.windowCommandCoordinator.runCustomWindowSize(id: id)
             }
             hotKeys.onOpenQuicklink = { [weak self] id in
-                self?.quicklinkCoordinator.openQuicklink(id: id)
+                self?.quicklinkCoordinator.openQuicklinkFromHotKey(id: id)
             }
             hotKeys.onRunQuickAction = { [weak self] id in
                 self?.quickActionCoordinator.run(id: id)
@@ -387,10 +417,17 @@ final class AppCore: HealthCheckable {
             appIndex.onScan = { [weak self] in
                 guard let self else { return }
                 hotKeys.removeAppBindings(where: appIndex.isUninstalled)
+                // After the first scan, so the file's apps and panes have entries to match.
+                if settings.settingsFileEnabled, settingsFile == nil {
+                    startSettingsFile(importing: true)
+                } else if let launcherSettingsFile {
+                    reportSettingsFileIssues(launcherSettingsFile.applyInstalled())
+                }
             }
             hotKeys.displayName = { [weak self] action in self?.hotKeyDisplayName(for: action) }
             hotKeys.allowsAction = { [weak self] action in
                 guard let self, visibility.allowsHotKey(action) else { return false }
+                if action == .dictation { return settings.dictationEnabled }
                 // A disabled feature drops its commands from the launcher; their shortcuts go too.
                 guard case .command(let id) = action else { return true }
                 return appIndex.isCommandEnabled(id)
@@ -409,8 +446,11 @@ final class AppCore: HealthCheckable {
                 windowRoomIDs: Set(rooms.rooms.map(\.id)),
                 customWindowSizeIDs: Set(customWindowSizes.sizes.map(\.id)),
                 quickActionIDs: Set(customQuickActions.actions.map(\.id)))
-            // Keeps running while Carbon pauses: the recorder needs its rewritten flags.
-            hyperKeyTap.start(settings: settings)
+            // After `hotKeys.start`: Secure Input equivalents are built from the loaded bindings.
+            hyperKey.onProblem = { [weak self] in self?.showMessage($0, tone: .danger) }
+            hyperKey.start()
+            dictationKey.onProblem = { [weak self] in self?.showMessage($0, tone: .danger) }
+            dictationKey.start()
 
             snippetsStore.onSnapshot = { [weak self] snapshot in
                 guard let self else { return }
@@ -427,18 +467,20 @@ final class AppCore: HealthCheckable {
             snippetCoordinator.applySnippetsLauncherPresence()
 
             observeFeatureSwitches()
-            // Last, so an edit made while Tinycast was quit reaches every sink wired above.
-            if settings.settingsFileEnabled { startSettingsFile(importing: true) }
 
             // First launch binds no hotkey, so guide once; the marker is written at show-time.
             if !OnboardingState.hasOnboarded {
                 OnboardingState.markShown()
                 onboardingCoordinator.showOnboarding()
+            } else if launchedByUser {
+                paletteCoordinator.showPalette(mode: .launcher)
+            }
+            if let version = updateChecker.takeInstalledVersion() {
+                showMessage(String(localized: "Updated to Tinycast \(version.description)"))
             }
         }
     }
 
-    /// Clicking the Dock icon: raise whichever window is already open, else summon the launcher.
     func handleReopen() {
         if settingsCoordinator.focusExisting() { return }
         if aiChatCoordinator.focusExisting() { return }
@@ -449,22 +491,17 @@ final class AppCore: HealthCheckable {
     }
 
     func handleOpenURL(_ url: URL) {
-        switch ExtensionOAuthSession.handleCallbackURL(url) {
-        case .delivered:
-            paletteCoordinator.showPalette(mode: .extensionCommand, restoreAnyMode: true)
-            return
-        case .expired:
-            showMessage("Sign-in expired — run the command again", tone: .danger)
-            return
-        case .ignored:
-            break
-        }
         guard ExtensionDeepLink.claims(url) else { return }
-        guard let link = ExtensionDeepLink.parse(url: url) else {
+        guard let route = ExtensionDeepLink.route(url: url) else {
             paletteCoordinator.showPalette(mode: .launcher, restoreAnyMode: true)
             return
         }
-        extensionCoordinator.runDeepLink(link)
+        switch route {
+        case .command(let link):
+            extensionCoordinator.runDeepLink(link)
+        case .storeInstall(let install):
+            extensionCoordinator.showStoreInstall(install)
+        }
     }
 
     /// The store-backed half of the conflict message; `HotKeyManager` names the catalogs itself.
@@ -493,13 +530,20 @@ final class AppCore: HealthCheckable {
             return snippetsStore.record(id: id)?.snippet.name
         case .extensionCommand(let entryID):
             return appIndex.apps.first { $0.kind == .extensionCommand && $0.id == entryID }?.name
-        case .togglePalette, .command, .systemAction, .windowCommand:
+        case .togglePalette, .dictation, .command, .systemAction, .windowCommand:
             return nil
         }
     }
 
     func flushNotesForTermination() async {
         await notesCoordinator.prepareForTermination()
+    }
+
+    func stopDictationForTermination() async {
+        if settings.dictationEnabled { dictationCoordinator.prepareForTermination() }
+        dictationAudioDucker.restoreImmediately()
+        await dictationAudioDucker.waitForTransition()
+        await dictationModels.stop()
     }
 
     /// Idempotent: both switches are tracked, and either one flipping re-runs the whole decision.
@@ -512,7 +556,9 @@ final class AppCore: HealthCheckable {
             return
         }
         guard clipboardStore.setTextSearchEnabled(true) else {
-            showMessage("Couldn't enable text recognition for clipboard history.", tone: .danger)
+            showMessage(
+                String(localized: "Couldn't enable text recognition for clipboard history."),
+                tone: .danger)
             return
         }
         clipboardStore.setTextSearchActive(palette.isVisible)
@@ -528,14 +574,25 @@ final class AppCore: HealthCheckable {
         indexer.start()
     }
 
+    func relaunch() {
+        guard !relaunchRequested else { return }
+        relaunchRequested = true
+        // AppKit's termination loop must start outside a Swift task or dispatch callback.
+        RunLoop.main.perform(inModes: [.common]) {
+            MainActor.assumeIsolated { NSApp.terminate(nil) }
+        }
+    }
+
     func prepareForTermination() {
         instantSpaceSwipeMonitor.stop()
         healthTicker.unsubscribe(self)
         instantSpaceSwipeHealthSubscribed = false
+        if settings.dictationEnabled { dictationCoordinator.prepareForTermination() }
         settingsFile?.flush()
         clipboardTextIndexer?.stop()
-        // Caps Lock first: its remap is the one teardown that outlives the process.
-        hyperKeyTap.prepareForTermination()
+        // HID remaps first: they outlive the process.
+        hyperKey.prepareForTermination()
+        dictationKey.prepareForTermination()
         windowLayoutCoordinator.prepareForTermination()
         roomCoordinator.prepareForTermination()
         inputSourceSwitcher.endSession()
@@ -547,6 +604,7 @@ final class AppCore: HealthCheckable {
         mcpOAuth.stop()
         mcp.stop()
         installedAI.stop()
+        if relaunchRequested { RelaunchRunner.relaunchAfterExit(Bundle.main.bundleURL) }
     }
 
     /// Only the tool whose own path or variables changed is checked again; the rest keep running.
@@ -591,7 +649,8 @@ final class AppCore: HealthCheckable {
             against: aiSettings.connections, fallback: aiSettings.defaultModel)
         guard let selection = quickActionSettings.model(for: action) ?? aiSettings.defaultModel
         else {
-            throw AIProviderError.unavailable("Choose a model in Settings \u{2192} Quick Actions.")
+            throw AIProviderError.unavailable(
+                String(localized: "Choose a model in Settings \u{2192} Quick Actions."))
         }
         return try AIProviderFactory.make(
             selection: selection, settings: aiSettings, subscription: chatGPTSubscription,
@@ -602,6 +661,9 @@ final class AppCore: HealthCheckable {
     // MARK: - Feature switches
 
     private func observeFeatureSwitches() {
+        track(
+            { _ = $0.automaticallyCheckForUpdates },
+            reproject: { $0.updateCoordinator.applyAutomaticChecking() })
         track(
             {
                 _ = $0.windowManagementEnabled
@@ -641,6 +703,9 @@ final class AppCore: HealthCheckable {
         track(
             { _ = $0.clipboardTextSearchEnabled }, reproject: { $0.applyClipboardTextSearch() })
         track({ _ = $0.fileSearchEnabled }, reproject: { $0.fileSearchCoordinator.applyEnabled() })
+        track(
+            { _ = $0.fileSearchShowInLauncher },
+            reproject: { $0.fileSearchCoordinator.applyLauncherFiles() })
         // Two features, one switch: each coordinator gates only its own command and mode.
         track(
             { _ = $0.navigationEnabled },
@@ -650,6 +715,20 @@ final class AppCore: HealthCheckable {
             })
         track({ _ = $0.notesEnabled }, reproject: { $0.notesCoordinator.applyEnabled() })
         track({ _ = $0.aiEnabled }, reproject: { $0.aiChatCoordinator.applyEnabled() })
+        track(
+            { _ = $0.dictationIdleRelease },
+            reproject: {
+                $0.dictationModels.setIdleRelease($0.settings.dictationIdleRelease)
+            })
+        track(
+            {
+                _ = $0.dictationEnabled
+                _ = $0.dictationMode
+            },
+            reproject: {
+                $0.hotKeys.dictationHoldToTalk = $0.settings.dictationMode == .pushToTalk
+                $0.hotKeys.dictationEnabled = $0.settings.dictationEnabled
+            })
         track(
             {
                 _ = $0.aiEnabled
@@ -679,6 +758,7 @@ final class AppCore: HealthCheckable {
             {
                 _ = $0.fileSearchScopes
                 _ = $0.fileSearchIgnorePatterns
+                _ = $0.fileSearchRemovedDefaultPatterns
             }, reproject: { $0.fileSearchCoordinator.applyPolicy() })
         track({ _ = $0.snippetsEnabled }, reproject: { $0.snippetCoordinator.applySnippetsEnabled() })
         // Not a feature switch, but the same re-projection: a combo has the chord's ⇧ bit baked in.
@@ -687,6 +767,8 @@ final class AppCore: HealthCheckable {
             { _ = $0.snippetsShowInLauncher },
             reproject: { $0.snippetCoordinator.applySnippetsLauncherPresence() })
         track({ _ = $0.appearance }, reproject: { $0.applyAppearance() })
+        track({ _ = $0.animationsEnabled }, reproject: { $0.applyMotion() })
+        track({ _ = $0.language }, reproject: { $0.offerLanguageRelaunch() })
         track({ _ = $0.interfaceSize }, reproject: { $0.windowController.applyInterfaceSize() })
         // Settings panes did these on change; settings.json can change them with no pane open.
         track(
@@ -705,6 +787,31 @@ final class AppCore: HealthCheckable {
     /// `.system` resolves to `nil`, so AppKit follows macOS with nothing polling.
     private func applyAppearance() {
         NSApp.appearance = settings.appearance.nsAppearance
+    }
+
+    /// A built panel keeps the behaviour it was made with, so the live ones are re-pointed.
+    private func applyMotion() {
+        Motion.isEnabled = settings.animationsEnabled
+        for case let panel as any AnimatedPanel in NSApp.windows {
+            panel.followMotion()
+        }
+    }
+
+    private var isLanguagePending: Bool { settings.language.rawValue != launchLocalization }
+
+    private func offerLanguageRelaunch() {
+        guard isLanguagePending else { return }
+        Task {
+            guard
+                await confirm(
+                    title: String(localized: "Relaunch Tinycast?"),
+                    message: String(localized: "The new language applies after Tinycast relaunches."),
+                    symbol: "globe", confirmTitle: String(localized: "Relaunch"), tone: .neutral,
+                    confirmRole: .standard, dismissTitle: String(localized: "Later")),
+                isLanguagePending
+            else { return }
+            relaunch()
+        }
     }
 
     /// IconCache is told here, not from `applyAppearance()`, which never fires under `.system`.
@@ -803,10 +910,12 @@ final class AppCore: HealthCheckable {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let openSettings = await self.reportFailure(
-                    title: "Couldn't Enable Instant Space Swipes",
-                    message: "Tinycast couldn't listen for horizontal trackpad swipes. Make sure "
-                        + "Accessibility access is granted.",
-                    symbol: "hand.draw", recovery: "Open Settings")
+                    title: String(localized: "Couldn't Enable Instant Space Swipes"),
+                    message: String(
+                        localized:
+                            "Tinycast couldn't listen for horizontal trackpad swipes. Make sure Accessibility access is granted."
+                    ),
+                    symbol: "hand.draw", recovery: String(localized: "Open Settings"))
                 if openSettings { Permissions.openAccessibilitySettings() }
             }
         } else {
@@ -819,17 +928,21 @@ final class AppCore: HealthCheckable {
     /// Mirrors settings into settings.json from now on; `importing` applies the file's own first.
     func startSettingsFile(importing: Bool) {
         guard settingsFile == nil else { return }
+        let shortcuts = HotKeySettingsFile(hotKeys: hotKeys)
+        let launcher = LauncherSettingsFile(
+            appIndex: appIndex, aliases: aliases, visibility: visibility, shortcuts: shortcuts)
         let file = SettingsFileRepository(
             fileURL: AppPaths.settingsFile(),
             bindings: SettingsFileSchema.bindings(
                 settings: settings, ai: aiSettings, quickActions: quickActionSettings,
+                shortcuts: shortcuts, launcher: launcher,
                 windowManagement: WindowManagementSettingsFile(
-                    sizes: customWindowSizes, layouts: windowLayouts, rooms: rooms, hotKeys: hotKeys)))
-        file.onIssues = { [weak self] issues in
-            guard let summary = SettingsFileIssue.summary(issues) else { return }
-            self?.showMessage(summary, tone: .danger)
-        }
+                    sizes: customWindowSizes, layouts: windowLayouts, rooms: rooms, aliases: aliases,
+                    shortcuts: shortcuts)),
+            commit: shortcuts.commit)
+        file.onIssues = { [weak self] issues in self?.reportSettingsFileIssues(issues) }
         settingsFile = file
+        launcherSettingsFile = launcher
         settings.settingsFileEnabled = true
         file.start(importing: importing)
     }
@@ -838,7 +951,13 @@ final class AppCore: HealthCheckable {
     func stopSettingsFile() {
         settingsFile?.flush()
         settingsFile = nil
+        launcherSettingsFile = nil
         settings.settingsFileEnabled = false
+    }
+
+    private func reportSettingsFileIssues(_ issues: [SettingsFileIssue]) {
+        guard let summary = SettingsFileIssue.summary(issues) else { return }
+        showMessage(summary, tone: .danger)
     }
 
     // MARK: - Interruption
@@ -863,7 +982,7 @@ final class AppCore: HealthCheckable {
     func confirm(
         title: String, message: String?, symbol: String?, confirmTitle: String,
         tone: DialogTone = .danger, confirmRole: DialogAction.Role = .destructive,
-        dismissTitle: String = "Cancel"
+        dismissTitle: String = String(localized: "Cancel")
     ) async -> Bool {
         await dialogs.confirm(
             title: title, message: message, symbol: symbol, tone: tone, confirmTitle: confirmTitle,
@@ -904,20 +1023,17 @@ final class AppCore: HealthCheckable {
         messageHUD.dismiss()
     }
 
-    /// The volume slider, so `dialogs` stays the single owner of every prompt in the app.
     func pickVolume(current: Float32) async -> Float32? {
         await dialogs.pickVolume(current: current)
     }
 
-    /// The new-event prompt, for the same reason.
-    func createEvent() async -> EventDraft? {
-        await dialogs.createEvent()
-    }
-
-    /// The snippet argument prompt, for the same reason.
     func fillSnippetArguments(
         snippetName: String, arguments: [SnippetTemplateEngine.MissingArgument]
     ) async -> [String: String]? {
         await dialogs.fillSnippetArguments(snippetName: snippetName, arguments: arguments)
+    }
+
+    func editClipboardText(_ text: String) async -> String? {
+        await dialogs.editClipboardText(text)
     }
 }

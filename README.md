@@ -20,9 +20,6 @@ RAM.**
   <a href="https://discord.gg/v2Eeb4QQy3">
     <img alt="Join the Tinycast Discord"
          src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white"></a>
-  <a href="https://tinycast.dev/support">
-    <img alt="Support Tinycast"
-         src="https://img.shields.io/badge/Support-Tip%20the%20dev-EA4AAA?style=flat&logo=polar&logoColor=white"></a>
 </p>
 
 SwiftUI and AppKit, **zero third-party dependencies**, no Electron and no telemetry. It also **runs
@@ -32,17 +29,6 @@ For anything private, email [iabueammar@gmail.com](mailto:iabueammar@gmail.com).
 
 <p align="center">
   <img src="docs/screenshot.png" alt="Tinycast command palette" width="720">
-</p>
-
-## Support
-
-Tinycast is **free, and it stays that way**. If it earns a place in your daily flow, a one-off tip helps
-keep it actively maintained. GitHub Sponsors isn't available in my country, so please support here:
-
-<p align="center">
-  <a href="https://tinycast.dev/support">
-    <img alt="Support Tinycast" width="188" height="44" src="docs/support-button.svg"></a><br>
-  <sub>Payments are handled securely by <a href="https://polar.sh">Polar.sh</a>.</sub>
 </p>
 
 ## Features
@@ -119,33 +105,54 @@ See **[docs/development.md](docs/development.md)** for the toolchain, build, pac
 website workflows. **[docs/](docs/README.md)** indexes everything else — architecture, engineering
 standards, the design system and one document per feature.
 
-## Contributing
+## Support
 
-> [!IMPORTANT]
-> **Open an issue before you write code — this is mandatory.** Get the bug or the feature agreed on
-> first; discussing it in the issue (or on [Discord](https://discord.gg/v2Eeb4QQy3)) is strongly
-> encouraged. A PR that doesn't close an issue marked `approved` is closed automatically however good
-> the patch is, and the work is wasted. Docs-only fixes are the one exception.
->
-> Tinycast's feature set is deliberately closed, and "another launcher has it" is not a reason on its
-> own. Ask whether a feature is wanted before you ask for it.
+Tinycast is **free, and it stays that way**. If you enjoy it, you can support it with crypto: scan a
+code with your wallet, or copy an address. Send only on the network named for that address. If yours
+isn't listed, [email me](mailto:iabueammar@gmail.com?subject=Supporting%20Tinycast).
 
-Read **[CONTRIBUTING.md](CONTRIBUTING.md)** first — it covers the memory budget every PR is held to,
-the before/after video requirement for visual changes, and why features get declined. Every PR fills
-in the **[pull request template](.github/PULL_REQUEST_TEMPLATE.md)**. Security issues go through
-[SECURITY.md](SECURITY.md), not the issue tracker.
+<table>
+  <tr>
+    <td align="center">
+      <img width="160" alt="Bitcoin address QR code" src="website/public/wallets/bitcoin-qr.svg"><br>
+      <b>Bitcoin</b>
+    </td>
+    <td align="center">
+      <img width="160" alt="Ethereum, Base and BNB Smart Chain address QR code" src="website/public/wallets/ethereum-qr.svg"><br>
+      <b>Ethereum, Base, BNB Smart Chain</b>
+    </td>
+    <td align="center">
+      <img width="160" alt="Solana address QR code" src="website/public/wallets/solana-qr.svg"><br>
+      <b>Solana</b>
+    </td>
+  </tr>
+</table>
 
-Questions, ideas, or just want to follow along? **[Join the Discord](https://discord.gg/v2Eeb4QQy3)**.
+**Bitcoin**
 
-## Star History
+```text
+bc1qpfxtjpuhm2cm8kg4lqgu3ffjch7vcjf678arwn
+```
 
-<a href="https://www.star-history.com/?repos=abue-ammar%2Ftinycast&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=abue-ammar/tinycast&type=date&legend=top-left" />
- </picture>
-</a>
+**Ethereum, Base and BNB Smart Chain** (one address for all three)
+
+```text
+0x22A00612bc0bf1Dc73AAC75e8De1BA4e81fF0810
+```
+
+**Solana**
+
+```text
+4EH7JDXZxkJiahas1xgPyC1iBW9pfCVUXxVtpqvwAz6T
+```
+
+Prefer a card? Buy the wallpaper pack and get a Discord role.
+
+<p align="center">
+  <a href="https://tinycast.dev/support">
+    <img alt="Support Tinycast" width="188" height="44" src="docs/support-button.svg"></a><br>
+  <sub>Card payments are handled securely by <a href="https://polar.sh">Polar.sh</a>.</sub>
+</p>
 
 ## License
 

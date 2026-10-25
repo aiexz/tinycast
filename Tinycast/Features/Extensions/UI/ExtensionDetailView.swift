@@ -49,7 +49,6 @@ struct ExtensionDetailBody: View {
         .thinScrollbar()
     }
 
-    /// A `Detail.Metadata` sidebar's fixed width; the markdown pane takes what's left.
     private static let metadataWidth: CGFloat = 240
 
     private func metadataPane(_ metadata: RenderNode) -> some View {
@@ -275,12 +274,12 @@ struct ExtensionMarkdownView: View {
                         .textSelection(.enabled)
                 case .bullet(let text):
                     HStack(alignment: .top, spacing: metrics.spacing.sm) {
-                        Text("•").foregroundStyle(.secondary)
+                        Text(verbatim: "•").foregroundStyle(.secondary)
                         Text(inline(text)).font(metrics.typography.rowTitle)
                     }
                 case .numbered(let index, let text):
                     HStack(alignment: .top, spacing: metrics.spacing.sm) {
-                        Text("\(index).").foregroundStyle(.secondary).monospacedDigit()
+                        Text(verbatim: "\(index).").foregroundStyle(.secondary).monospacedDigit()
                         Text(inline(text)).font(metrics.typography.rowTitle)
                     }
                 case .quote(let text):
@@ -437,11 +436,18 @@ struct ExtensionMarkdownView: View {
     }
 
     private static func standaloneImageURL(_ line: String) -> URL? {
-        guard line.hasPrefix("!["), let open = line.lastIndex(of: "("), line.hasSuffix(")") else {
-            return nil
+        let target: String
+        if line.hasPrefix("<img"),
+            let tag = line.wholeMatch(of: #/<img(?:\s[^>]*?)?\ssrc=["']([^"']+)["'][^>]*>/#)
+        {
+            target = String(tag.1)
+        } else {
+            guard line.hasPrefix("!["), let open = line.lastIndex(of: "("), line.hasSuffix(")") else {
+                return nil
+            }
+            let inner = line[line.index(after: open)..<line.index(before: line.endIndex)]
+            target = inner.split(separator: " ").first.map(String.init) ?? String(inner)
         }
-        let inner = line[line.index(after: open)..<line.index(before: line.endIndex)]
-        let target = inner.split(separator: " ").first.map(String.init) ?? String(inner)
         guard let url = URL(string: target), let scheme = url.scheme,
             scheme.hasPrefix("http") || scheme == "data"
         else { return nil }
@@ -450,7 +456,6 @@ struct ExtensionMarkdownView: View {
 }
 
 extension String {
-    /// `1. text` → `text`, for ordered-list detection.
     fileprivate func firstMatch(ofNumberedList: Void) -> String? {
         let digits = prefix(while: \.isNumber)
         guard !digits.isEmpty else { return nil }

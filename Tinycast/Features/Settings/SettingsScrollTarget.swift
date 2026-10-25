@@ -59,7 +59,11 @@ struct SettingsRowTitle: View {
     let anchor: SettingsAnchor
     let title: String
 
-    init(_ anchor: SettingsAnchor, _ title: String) {
+    init(_ anchor: SettingsAnchor, _ title: LocalizedStringResource) {
+        self.init(anchor, verbatim: title.resolved())
+    }
+
+    init(_ anchor: SettingsAnchor, verbatim title: String) {
         self.anchor = anchor
         self.title = title
     }

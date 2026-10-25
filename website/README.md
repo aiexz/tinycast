@@ -31,6 +31,7 @@ generated and not committed.
 | Path               | Holds                                                                  |
 | ------------------ | ---------------------------------------------------------------------- |
 | `src/app/`         | Routes. `page.tsx` is the marketing page; `docs/` is the documentation |
+| `src/lib/`         | Build-time GitHub reads: the version, stars and the stable changelog   |
 | `worker/`          | The Worker behind `/support`'s API                                     |
 | `src/components/`  | Page sections, with shared primitives in `ui/`                         |
 | `src/data/`        | All copy and content, so components stay free of prose                 |
@@ -67,15 +68,23 @@ still renders, with checkout disabled. To try it against Polar's sandbox, copy `
 to `.dev.vars` (gitignored), fill it in, and run `npm run preview` (http://localhost:8787).
 `npm run check:worker` type-checks the Worker; its types are generated on install.
 
+The crypto addresses live in `src/data/support.ts`. Each one has a mark and a QR code in
+`public/wallets/`, and the root README shows the same codes. A code encodes its address verbatim,
+so changing an address means replacing its codes and scanning them before you commit.
+
 ## Media
 
-Files over 25 MiB cannot ship in `public/`. Put them in `media/` and reference them as
-`` `${site.cdn}/<name>` ``; they are uploaded on push. A new file extension also needs its content
-type added to `Scripts/upload-website-media.sh`.
+Videos and files over 25 MiB never enter git. Put them in `media/` (gitignored), run
+`npm run upload-media` to copy them to the R2 bucket behind `cdn.tinycast.dev`, and reference them
+as `` `${site.cdn}/<name>` ``. The bucket is the only copy, and the upload needs Cloudflare
+credentials (`wrangler login`). A new file extension also needs its content type added to
+`Scripts/upload-website-media.sh`.
 
 ## Deploy
 
-Pushing to `main` deploys the site. To check the exported build locally:
+Pushing to `main` deploys the site, and so does every stable release, so `/changelog` and the
+footer's version never lag a release. The build reads GitHub's API with CI's `GITHUB_TOKEN`; a local
+build without one makes anonymous requests. To check the exported build locally:
 
 ```sh
 npm run build
